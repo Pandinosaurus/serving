@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "tensorflow_serving/model_servers/http_rest_api_util.h"
 
+#include <utility>
+#include <vector>
+
 #include "google/protobuf/util/json_util.h"
 #include "absl/strings/numbers.h"
 #include <curl/curl.h>
@@ -40,7 +43,7 @@ void AddCORSHeaders(std::vector<std::pair<string, string>>* headers) {
   headers->push_back({"Access-Control-Allow-Headers", "Content-Type"});
 }
 
-Status FillModelSpecWithNameVersionAndLabel(
+absl::Status FillModelSpecWithNameVersionAndLabel(
     const absl::string_view model_name,
     const absl::optional<int64_t>& model_version,
     const absl::optional<absl::string_view> model_version_label,
@@ -60,7 +63,7 @@ Status FillModelSpecWithNameVersionAndLabel(
   if (model_version_label.has_value()) {
     model_spec->set_version_label(string(model_version_label.value()));
   }
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 bool DecodeArg(string* arg) {
@@ -84,12 +87,13 @@ bool DecodeArg(string* arg) {
   return false;
 }
 
-Status ParseModelInfo(const absl::string_view http_method,
-                      const absl::string_view request_path, string* model_name,
-                      absl::optional<int64_t>* model_version,
-                      absl::optional<string>* model_version_label,
-                      string* method, string* model_subresource,
-                      bool* parse_successful) {
+absl::Status ParseModelInfo(const absl::string_view http_method,
+                            const absl::string_view request_path,
+                            string* model_name,
+                            absl::optional<int64_t>* model_version,
+                            absl::optional<string>* model_version_label,
+                            string* method, string* model_subresource,
+                            bool* parse_successful) {
   string model_version_str;
   string model_version_label_str;
   // Parse request parameters
@@ -123,26 +127,28 @@ Status ParseModelInfo(const absl::string_view http_method,
     }
     *model_version_label = model_version_label_str;
   }
-  return OkStatus();
+  return absl::OkStatus();
 }
 
-Status ToJsonString(const GetModelStatusResponse& response, string* output) {
+absl::Status ToJsonString(const GetModelStatusResponse& response,
+                          string* output) {
   google::protobuf::util::JsonPrintOptions opts;
   opts.add_whitespace = true;
-  opts.always_print_primitive_fields = true;
+  opts.always_print_fields_with_no_presence = true;
   // Note this is protobuf::util::Status (not TF Status) object.
   const auto& status = MessageToJsonString(response, output, opts);
   if (!status.ok()) {
     return errors::Internal("Failed to convert proto to json. Error: ",
                             status.ToString());
   }
-  return OkStatus();
+  return absl::OkStatus();
 }
 
-Status ToJsonString(const GetModelMetadataResponse& response, string* output) {
+absl::Status ToJsonString(const GetModelMetadataResponse& response,
+                          string* output) {
   google::protobuf::util::JsonPrintOptions opts;
   opts.add_whitespace = true;
-  opts.always_print_primitive_fields = true;
+  opts.always_print_fields_with_no_presence = true;
   // TODO(b/118381513): preserving proto field names on 'Any' fields has been
   // fixed in the master branch of OSS protobuf but the TF ecosystem is
   // currently using v3.6.0 where the fix is not present. To resolve the issue
@@ -191,7 +197,7 @@ Status ToJsonString(const GetModelMetadataResponse& response, string* output) {
   absl::StrAppend(output, "\"signature_def\": ", signature_def_output, "}\n");
   absl::StrAppend(output, "}\n");
 
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 }  // namespace serving

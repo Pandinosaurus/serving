@@ -1,5 +1,7 @@
 # Description: Tensorflow Serving examples.
 
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+
 package(
     default_visibility = ["//tensorflow_serving:internal"],
     features = ["no_layering_check"],
@@ -27,8 +29,10 @@ cc_binary(
         "//tensorflow_serving/apis:prediction_service_cc_proto",
         "@com_github_grpc_grpc//:grpc++",
         "@com_google_protobuf//:protobuf_lite",
+        "@local_xla//xla/tsl/util:command_line_flags",
         "@org_tensorflow//tensorflow/core:framework",
         "@org_tensorflow//tensorflow/core:lib",
+        "@org_tensorflow//tensorflow/core/framework:tensor",
         "@org_tensorflow//tensorflow/core/platform:jpeg",
     ],
 )

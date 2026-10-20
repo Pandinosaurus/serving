@@ -21,6 +21,7 @@ limitations under the License.
 #include <vector>
 
 #include <gtest/gtest.h>
+#include "absl/log/check.h"
 #include "tensorflow/cc/saved_model/loader.h"
 #include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/core/framework/tensor_testutil.h"
@@ -54,9 +55,9 @@ class SimpleServersTest : public ::testing::Test {
     // Note that "x" and "y" are the actual names of the nodes in the graph.
     // The saved manifest binds these to "input" and "output" respectively, but
     // these tests are focused on the raw underlying session without bindings.
-    const std::vector<std::pair<string, Tensor>> inputs = {{"x", input}};
-    const std::vector<string> output_names = {"y"};
-    const std::vector<string> empty_targets;
+    const std::vector<std::pair<std::string, Tensor>> inputs = {{"x", input}};
+    const std::vector<std::string> output_names = {"y"};
+    const std::vector<std::string> empty_targets;
     std::vector<Tensor> outputs;
 
     TF_ASSERT_OK(
@@ -68,23 +69,23 @@ class SimpleServersTest : public ::testing::Test {
   }
 
   // Test data path, to be initialized to point at an export of half-plus-two.
-  const string test_data_path_;
+  const std::string test_data_path_;
 };
 
 TEST_F(SimpleServersTest, Basic) {
   std::unique_ptr<Manager> manager;
-  const Status status = simple_servers::CreateSingleTFModelManagerFromBasePath(
-      test_data_path_, &manager);
-  TF_CHECK_OK(status);
+  const absl::Status status =
+      simple_servers::CreateSingleTFModelManagerFromBasePath(test_data_path_,
+                                                             &manager);
+  CHECK_OK(status);
   // We wait until the manager starts serving the servable.
-  // TODO(b/25545570): Use the waiter api when it's ready.
   while (manager->ListAvailableServableIds().empty()) {
     Env::Default()->SleepForMicroseconds(1000);
   }
   ServableHandle<SavedModelBundle> bundle;
-  const Status handle_status =
+  const absl::Status handle_status =
       manager->GetServableHandle(ServableRequest::Latest("default"), &bundle);
-  TF_CHECK_OK(handle_status);
+  CHECK_OK(handle_status);
   TestSingleRequest(*bundle);
 }
 

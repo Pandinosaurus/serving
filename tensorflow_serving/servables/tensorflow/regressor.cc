@@ -21,6 +21,7 @@ limitations under the License.
 #include <functional>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "tensorflow/cc/saved_model/signature_constants.h"
@@ -57,12 +58,12 @@ class SavedModelTensorFlowRegressor : public RegressorInterface {
 
   ~SavedModelTensorFlowRegressor() override = default;
 
-  Status Regress(const RegressionRequest& request,
-                 RegressionResult* result) override {
+  absl::Status Regress(const RegressionRequest& request,
+                       RegressionResult* result) override {
     TRACELITERAL("SavedModelTensorFlowRegressor::Regress");
 
-    string input_tensor_name;
-    std::vector<string> output_tensor_names;
+    std::string input_tensor_name;
+    std::vector<std::string> output_tensor_names;
     TF_RETURN_IF_ERROR(PreProcessRegression(*signature_, &input_tensor_name,
                                             &output_tensor_names));
 
@@ -98,8 +99,8 @@ class SavedModelRegressor : public RegressorInterface {
 
   ~SavedModelRegressor() override = default;
 
-  Status Regress(const RegressionRequest& request,
-                 RegressionResult* result) override {
+  absl::Status Regress(const RegressionRequest& request,
+                       RegressionResult* result) override {
     SignatureDef signature;
     TF_RETURN_IF_ERROR(GetRegressionSignatureDef(
         request.model_spec(), bundle_->meta_graph_def, &signature));
@@ -117,14 +118,14 @@ class SavedModelRegressor : public RegressorInterface {
 
 }  // namespace
 
-Status CreateRegressorFromSavedModelBundle(
+absl::Status CreateRegressorFromSavedModelBundle(
     const RunOptions& run_options, std::unique_ptr<SavedModelBundle> bundle,
     std::unique_ptr<RegressorInterface>* service) {
   service->reset(new SavedModelRegressor(run_options, std::move(bundle)));
-  return OkStatus();
+  return absl::OkStatus();
 }
 
-Status CreateFlyweightTensorFlowRegressor(
+absl::Status CreateFlyweightTensorFlowRegressor(
     const RunOptions& run_options, Session* session,
     const SignatureDef* signature,
     std::unique_ptr<RegressorInterface>* service) {
@@ -132,30 +133,30 @@ Status CreateFlyweightTensorFlowRegressor(
       run_options, session, signature, thread::ThreadPoolOptions(), service);
 }
 
-Status CreateFlyweightTensorFlowRegressor(
+absl::Status CreateFlyweightTensorFlowRegressor(
     const RunOptions& run_options, Session* session,
     const SignatureDef* signature,
     const thread::ThreadPoolOptions& thread_pool_options,
     std::unique_ptr<RegressorInterface>* service) {
   service->reset(new SavedModelTensorFlowRegressor(
       run_options, session, signature, thread_pool_options));
-  return OkStatus();
+  return absl::OkStatus();
 }
 
-Status GetRegressionSignatureDef(const ModelSpec& model_spec,
-                                 const MetaGraphDef& meta_graph_def,
-                                 SignatureDef* signature) {
-  const string signature_name = model_spec.signature_name().empty()
-                                    ? kDefaultServingSignatureDefKey
-                                    : model_spec.signature_name();
+absl::Status GetRegressionSignatureDef(const ModelSpec& model_spec,
+                                       const MetaGraphDef& meta_graph_def,
+                                       SignatureDef* signature) {
+  const std::string signature_name = model_spec.signature_name().empty()
+                                         ? kDefaultServingSignatureDefKey
+                                         : model_spec.signature_name();
   auto iter = meta_graph_def.signature_def().find(signature_name);
   if (iter == meta_graph_def.signature_def().end()) {
-    return errors::InvalidArgument(strings::StrCat(
-        "No signature was found with the name: ", signature_name));
+    return absl::InvalidArgumentError(
+        absl::StrCat("No signature was found with the name: ", signature_name));
   }
   if (GetSignatureMethodNameCheckFeature()) {
     if (iter->second.method_name() != kRegressMethodName) {
-      return errors::InvalidArgument(strings::StrCat(
+      return absl::InvalidArgumentError(absl::StrCat(
           "Expected regression signature method_name to be ",
           kRegressMethodName, ". Was: ", iter->second.method_name()));
     }
@@ -163,32 +164,30 @@ Status GetRegressionSignatureDef(const ModelSpec& model_spec,
     TF_RETURN_IF_ERROR(PreProcessRegression(iter->second, nullptr, nullptr));
   }
   *signature = iter->second;
-  return OkStatus();
+  return absl::OkStatus();
 }
 
-Status PreProcessRegression(const SignatureDef& signature,
-                            string* input_tensor_name,
-                            std::vector<string>* output_tensor_names) {
+absl::Status PreProcessRegression(
+    const SignatureDef& signature, std::string* input_tensor_name,
+    std::vector<std::string>* output_tensor_names) {
   if (GetSignatureMethodNameCheckFeature() &&
       signature.method_name() != kRegressMethodName) {
-    return errors::InvalidArgument(strings::StrCat(
-        "Expected regression signature method_name to be ", kRegressMethodName,
-        ". Was: ", signature.method_name()));
+    return absl::InvalidArgumentError(
+        absl::StrCat("Expected regression signature method_name to be ",
+                     kRegressMethodName, ". Was: ", signature.method_name()));
   }
   if (signature.inputs().size() != 1) {
-    return errors::InvalidArgument(
-        strings::StrCat("Expected one input Tensor."));
+    return absl::InvalidArgumentError("Expected one input Tensor.");
   }
   if (signature.outputs().size() != 1) {
-    return errors::InvalidArgument(
-        strings::StrCat("Expected one output Tensor."));
+    return absl::InvalidArgumentError("Expected one output Tensor.");
   }
 
   auto input_iter = signature.inputs().find(kRegressInputs);
   if (input_iter == signature.inputs().end()) {
-    return errors::InvalidArgument(
-        "No regression inputs found in SignatureDef: ",
-        signature.DebugString());
+    return absl::InvalidArgumentError(
+        absl::StrCat("No regression inputs found in SignatureDef: ",
+                     signature.DebugString()));
   }
   if (input_tensor_name != nullptr) {
     *input_tensor_name = input_iter->second.name();
@@ -196,33 +195,33 @@ Status PreProcessRegression(const SignatureDef& signature,
 
   auto output_iter = signature.outputs().find(kRegressOutputs);
   if (output_iter == signature.outputs().end()) {
-    return errors::InvalidArgument(
-        "No regression outputs found in SignatureDef: ",
-        signature.DebugString());
+    return absl::InvalidArgumentError(
+        absl::StrCat("No regression outputs found in SignatureDef: ",
+                     signature.DebugString()));
   }
   if (output_tensor_names != nullptr) {
     output_tensor_names->push_back(output_iter->second.name());
   }
-  return OkStatus();
+  return absl::OkStatus();
 }
 
-Status PostProcessRegressionResult(
+absl::Status PostProcessRegressionResult(
     const SignatureDef& signature, int num_examples,
-    const std::vector<string>& output_tensor_names,
+    const std::vector<std::string>& output_tensor_names,
     const std::vector<Tensor>& output_tensors, RegressionResult* result) {
   if (output_tensors.size() != output_tensor_names.size()) {
-    return errors::InvalidArgument(
+    return absl::InvalidArgumentError(
         "Expected output_tensors and output_tensor_names to have the same "
         "size.");
   }
 
   auto output_iter = signature.outputs().find(kRegressOutputs);
   if (output_iter == signature.outputs().end()) {
-    return errors::FailedPrecondition(
-        "No regression outputs found in SignatureDef: ",
-        signature.DebugString());
+    return absl::FailedPreconditionError(
+        absl::StrCat("No regression outputs found in SignatureDef: ",
+                     signature.DebugString()));
   }
-  const string output_tensor_name = output_iter->second.name();
+  const std::string output_tensor_name = output_iter->second.name();
   const Tensor* output_tensor = nullptr;
   for (int i = 0; i < output_tensor_names.size(); ++i) {
     if (output_tensor_names[i] == output_tensor_name) {
@@ -233,44 +232,45 @@ Status PostProcessRegressionResult(
 
   // Ensure the regression score output is shaped how we expect.
   if (output_tensor == nullptr) {
-    return errors::InvalidArgument(strings::StrCat(
+    return absl::InvalidArgumentError(absl::StrCat(
         "Could not find output tensor '", output_tensor_name, "'"));
   }
   if (!(output_tensor->dims() == 1 ||
         (output_tensor->dims() == 2 && output_tensor->dim_size(1) == 1))) {
-    return errors::InvalidArgument(
+    return absl::InvalidArgumentError(absl::StrCat(
         "Expected output Tensor shape to be either [batch_size] or ",
-        "[batch_size, 1] but got ", output_tensor->shape().DebugString());
+        "[batch_size, 1] but got ", output_tensor->shape().DebugString()));
   }
   if (num_examples != output_tensor->dim_size(0)) {
-    return errors::InvalidArgument(strings::StrCat(
+    return absl::InvalidArgumentError(absl::StrCat(
         "Input batch size did not match output batch size: ", num_examples,
         " vs. ", output_tensor->dim_size(0)));
   }
   if (output_tensor->dtype() != DT_FLOAT) {
-    return errors::InvalidArgument("Expected output Tensor of DT_FLOAT.  Got: ",
-                                   DataType_Name(output_tensor->dtype()));
+    return absl::InvalidArgumentError(
+        absl::StrCat("Expected output Tensor of DT_FLOAT.  Got: ",
+                     DataType_Name(output_tensor->dtype())));
   }
 
   if (output_tensor->NumElements() != num_examples) {
-    return errors::InvalidArgument("Expected output batch size to be ",
-                                   num_examples,
-                                   ".  Got: ", output_tensor->NumElements());
+    return absl::InvalidArgumentError(
+        absl::StrCat("Expected output batch size to be ", num_examples,
+                     ".  Got: ", output_tensor->NumElements()));
   }
 
   const auto& output_tensor_flat = output_tensor->flat<float>();
   for (int i = 0; i < num_examples; ++i) {
     result->add_regressions()->set_value(output_tensor_flat(i));
   }
-  return OkStatus();
+  return absl::OkStatus();
 }
 
-Status RunRegress(const RunOptions& run_options,
-                  const MetaGraphDef& meta_graph_def,
-                  const absl::optional<int64_t>& servable_version,
-                  Session* session, const RegressionRequest& request,
-                  RegressionResponse* response,
-                  const thread::ThreadPoolOptions& thread_pool_options) {
+absl::Status RunRegress(const RunOptions& run_options,
+                        const MetaGraphDef& meta_graph_def,
+                        const absl::optional<int64_t>& servable_version,
+                        Session* session, const RegressionRequest& request,
+                        RegressionResponse* response,
+                        const thread::ThreadPoolOptions& thread_pool_options) {
   SignatureDef signature;
   TF_RETURN_IF_ERROR(GetRegressionSignatureDef(request.model_spec(),
                                                meta_graph_def, &signature));

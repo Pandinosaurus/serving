@@ -1,5 +1,6 @@
 # Description: Tensorflow Serving core test utils.
 
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//tensorflow_serving:serving.bzl", "serving_proto_library")
 
 package(
@@ -30,8 +31,15 @@ cc_library(
     linkopts = ["-lm"],
     tags = ["keep_dep"],  # Tell build_cleaner to keep dependencies on this.
     deps = [
+        "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest",
+        "@com_google_googletest//:gtest_main",
+        "@org_tensorflow//tensorflow/core:lib",
+        "@org_tensorflow//tensorflow/core:test",
         "@org_tensorflow//tensorflow/core:testlib",
+        "@org_tensorflow//tensorflow/core/platform",
+        "@org_tensorflow//tensorflow/core/platform:test_benchmark",
+        "@org_tensorflow//tensorflow/core/platform:types",
     ],
 )
 
@@ -41,6 +49,7 @@ cc_library(
     hdrs = ["mock_loader.h"],
     deps = [
         "//tensorflow_serving/core:loader",
+        "//tensorflow_serving/core:servable_model_type",
         "//tensorflow_serving/util:any_ptr",
         "@com_google_googletest//:gtest",
         "@org_tensorflow//tensorflow/core:lib",
@@ -80,7 +89,6 @@ serving_proto_library(
     name = "fake_loader_source_adapter_proto",
     testonly = 1,
     srcs = ["fake_loader_source_adapter.proto"],
-    cc_api_version = 2,
     visibility = ["//visibility:public"],
 )
 
@@ -118,7 +126,6 @@ cc_library(
         "//tensorflow_serving/core:servable_state_monitor",
         "@com_google_absl//absl/types:optional",
         "@com_google_absl//absl/types:span",
-        "@com_google_googletest//:gtest",
         "@org_tensorflow//tensorflow/core:lib",
     ],
 )
@@ -143,7 +150,7 @@ cc_library(
         "//tensorflow_serving/core:manager",
         "//tensorflow_serving/core:servable_handle",
         "//tensorflow_serving/core:servable_id",
-        "@org_tensorflow//tensorflow/core:lib",
+        "@com_google_absl//absl/log:check",
     ],
 )
 
@@ -166,7 +173,6 @@ cc_library(
     hdrs = ["fake_log_collector.h"],
     deps = [
         "//tensorflow_serving/core:log_collector",
-        "@com_google_googletest//:gtest",
         "@com_google_protobuf//:protobuf",
         "@org_tensorflow//tensorflow/core:lib",
     ],
@@ -178,6 +184,8 @@ cc_library(
     hdrs = ["mock_request_logger.h"],
     deps = [
         "//tensorflow_serving/apis:logging_cc_proto",
+        "//tensorflow_serving/config:logging_config_cc_proto",
+        "//tensorflow_serving/core:log_collector",
         "//tensorflow_serving/core:request_logger",
         "@com_google_googletest//:gtest",
         "@com_google_protobuf//:protobuf",
@@ -218,4 +226,16 @@ cc_library(
         "@org_tensorflow//tensorflow/core:lib",
     ],
     alwayslink = 1,
+)
+
+cc_library(
+    name = "mock_prediction_stream_logger",
+    testonly = 1,
+    hdrs = ["mock_prediction_stream_logger.h"],
+    deps = [
+        "//tensorflow_serving/apis:logging_cc_proto",
+        "//tensorflow_serving/apis:predict_cc_proto",
+        "//tensorflow_serving/core:stream_logger",
+        "@com_google_googletest//:gtest",
+    ],
 )

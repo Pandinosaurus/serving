@@ -15,31 +15,38 @@ limitations under the License.
 
 #include "tensorflow_serving/test_util/test_util.h"
 
+#include <string>
+
 #include "tensorflow/core/lib/io/path.h"
 #include "tensorflow/core/platform/env.h"
 #include "tensorflow/core/platform/test.h"
+#include "tsl/platform/protobuf.h"
 
 namespace tensorflow {
 namespace serving {
 namespace test_util {
 
-string TensorflowTestSrcDirPath(const string& relative_path) {
-  const string base_path = tensorflow::io::JoinPath(  //
-      getenv("TEST_SRCDIR"),                              //
+std::string TensorflowTestSrcDirPath(const std::string& relative_path) {
+  const std::string base_path = tensorflow::io::JoinPath(  //
+      getenv("TEST_SRCDIR"),                                   //
       "tf_serving/external/org_tensorflow/tensorflow/");
   return tensorflow::io::JoinPath(base_path, relative_path);
 }
 
-string TestSrcDirPath(const string& relative_path) {
-  const string base_path = tensorflow::io::JoinPath(
+std::string TestSrcDirPath(const std::string& relative_path) {
+  const std::string base_path = tensorflow::io::JoinPath(
       getenv("TEST_SRCDIR"), "tf_serving/tensorflow_serving");
   return tensorflow::io::JoinPath(base_path, relative_path);
 }
 
-ProtoStringMatcher::ProtoStringMatcher(const string& expected)
+ProtoStringMatcher::ProtoStringMatcher(const std::string& expected)
     : expected_(expected) {}
 ProtoStringMatcher::ProtoStringMatcher(const google::protobuf::Message& expected)
-    : expected_(expected.DebugString()) {}
+    : expected_([&]() -> std::string {
+        std::string result;
+        tsl::protobuf::TextFormat::PrintToString(expected, &result);
+        return result;
+      }()) {}
 
 }  // namespace test_util
 }  // namespace serving

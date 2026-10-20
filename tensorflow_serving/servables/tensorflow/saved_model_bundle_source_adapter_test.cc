@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <memory>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -24,8 +25,8 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "tensorflow/cc/saved_model/loader.h"
+#include "xla/tsl/lib/core/status_test_util.h"
 #include "tensorflow/core/lib/core/status.h"
-#include "tensorflow/core/lib/core/status_test_util.h"
 #include "tensorflow/core/lib/monitoring/gauge.h"
 #include "tensorflow_serving/core/loader.h"
 #include "tensorflow_serving/core/servable_data.h"
@@ -83,15 +84,15 @@ class SavedModelBundleSourceAdapterTest
         EXPECT_EQ(expected_loader_metadata.servable_id.version,
                   actual_session_metadata.version());
       }
-      return OkStatus();
+      return absl::OkStatus();
     });
   }
 
-  void TestSavedModelBundleSourceAdapter(const string& export_dir) const {
+  void TestSavedModelBundleSourceAdapter(const std::string& export_dir) const {
     std::unique_ptr<Loader> loader;
     {
       std::unique_ptr<SavedModelBundleSourceAdapter> adapter;
-      TF_CHECK_OK(SavedModelBundleSourceAdapter::Create(config_, &adapter));
+      TF_ASSERT_OK(SavedModelBundleSourceAdapter::Create(config_, &adapter));
       ServableData<std::unique_ptr<Loader>> loader_data =
           adapter->AdaptOneVersion(
               ServableData<StoragePath>({"", 0}, export_dir));
@@ -162,8 +163,8 @@ TEST_P(SavedModelBundleSourceAdapterTest, BackwardCompatibility) {
 TEST_P(SavedModelBundleSourceAdapterTest, MLMetadata) {
   if (!EnableSessionMetadata()) return;
   TestSavedModelBundleSourceAdapter(test_util::TestSrcDirPath(
-      strings::StrCat("/servables/tensorflow/testdata/",
-                      "saved_model_half_plus_two_mlmd/00000123")));
+      absl::StrCat("/servables/tensorflow/testdata/",
+                   "saved_model_half_plus_two_mlmd/00000123")));
   auto* collection_registry = monitoring::CollectionRegistry::Default();
   monitoring::CollectionRegistry::CollectMetricsOptions options;
   const std::unique_ptr<monitoring::CollectedMetrics> collected_metrics =

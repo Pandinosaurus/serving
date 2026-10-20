@@ -1,5 +1,9 @@
 # Description: Tensorflow Serving batching test utilities.
 
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+# Placeholder: load py_binary
+
 package(
     default_visibility = ["//tensorflow_serving:internal"],
     features = ["-layering_check"],
@@ -46,6 +50,11 @@ cc_test(
 py_binary(
     name = "matrix_half_plus_two_saved_model",
     srcs = ["matrix_half_plus_two_saved_model.py"],
-    python_version = "PY3",
+    exec_properties = select({
+        # copybara:uncomment_begin(google-only)
+        # "//tools/cpp:asan_build": {"cpp_link.mem": "20g"},
+        # copybara:uncomment_end
+        "//conditions:default": None,
+    }),
     srcs_version = "PY3",
 )

@@ -47,16 +47,23 @@ if '--project_name' in sys.argv:
 _TF_REQ = ['tensorflow'+_TF_VERSION_SANITIZED]
 
 # GPU build (note: the only difference is we depend on tensorflow-gpu so
-# pip doesn't overwrite it with the CPU build)
-if 'tensorflow-serving-api-gpu' in project_name:
+# pip doesn't overwrite it with the CPU build. And tensorflow-gpu has been the
+# same package starting v2.1 according to
+# https://pypi.org/project/tensorflow-gpu/2.12.0/, so only check against TF
+# versions prior to v2.1.)
+if (
+    'tensorflow-serving-api-gpu' in project_name
+    and _VERSION < '2.1'
+    and _VERSION != '0.0.0'
+):
   _TF_REQ = ['tensorflow-gpu'+_TF_VERSION_SANITIZED]
 
 
 REQUIRED_PACKAGES = [
     # Match versions to what TF needs here:
-    #   https://github.com/tensorflow/tensorflow/blob/master/tensorflow/tools/pip_package/setup.py
+    #   https://github.com/tensorflow/tensorflow/blob/master/tensorflow/tools/pip_package/setup.py.tpl
     'grpcio >= 1.24.3, < 2.0',
-    'protobuf >= 3.9.2, < 3.20',
+    'protobuf >= 6.31.1, < 8.0.0',
 ] + _TF_REQ
 
 setup(
@@ -72,8 +79,8 @@ setup(
     keywords='tensorflow serving machine learning api libraries',
     install_requires=REQUIRED_PACKAGES,
     # Supported Python versions. Match to what TF needs here:
-    #   https://github.com/tensorflow/tensorflow/blob/master/tensorflow/tools/pip_package/setup.py
-    python_requires='>=3.7',
+    #   https://github.com/tensorflow/tensorflow/blob/master/tensorflow/tools/pip_package/setup.py.tpl
+    python_requires='>=3.10',
     classifiers=[
         'Development Status :: 5 - Production/Stable',
         'Intended Audience :: Developers',
@@ -81,9 +88,6 @@ setup(
         'Intended Audience :: Science/Research',
         'License :: OSI Approved :: Apache Software License',
         'Programming Language :: Python :: 3',
-        'Programming Language :: Python :: 3.7',
-        'Programming Language :: Python :: 3.8',
-        'Programming Language :: Python :: 3.9',
         'Programming Language :: Python :: 3.10',
         'Programming Language :: Python :: 3 :: Only',
         'Topic :: Scientific/Engineering',

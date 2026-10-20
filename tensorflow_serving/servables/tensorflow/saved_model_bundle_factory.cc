@@ -15,6 +15,11 @@ limitations under the License.
 
 #include "tensorflow_serving/servables/tensorflow/saved_model_bundle_factory.h"
 
+#include <memory>
+#include <unordered_set>
+#include <utility>
+#include <vector>
+
 #include "absl/strings/string_view.h"
 #include "tensorflow/cc/saved_model/tag_constants.h"
 #include "tensorflow/core/framework/tensor.pb.h"
@@ -23,8 +28,11 @@ limitations under the License.
 #include "tensorflow/core/protobuf/config.pb.h"
 #include "tensorflow/core/protobuf/meta_graph.pb.h"
 #include "tensorflow/core/protobuf/named_tensor.pb.h"
+#include "tensorflow/core/protobuf/rewriter_config.pb.h"
 #include "tensorflow/core/public/session_options.h"
 #include "tensorflow_serving/servables/tensorflow/bundle_factory_util.h"
+#include "tensorflow_serving/servables/tensorflow/saved_model_config.pb.h"
+#include "tensorflow_serving/servables/tensorflow/saved_model_config_util.h"
 #include "tensorflow_serving/servables/tensorflow/tflite_session.h"
 #include "tensorflow_serving/session_bundle/session_bundle_util.h"
 
@@ -46,22 +54,24 @@ std::vector<SignatureDef> GetSignatureDefs(const SavedModelBundle& bundle) {
 // TODO(b/140959776): Move this upstream alongside `kSavedModelFilenamePb`.
 const char kTfLiteModelFilename[] = "model.tflite";
 
-Status LoadTfLiteModel(const string& model_dir, SavedModelBundle* bundle,
-                       const SessionOptions& options, int num_interpreter_pools,
-                       int num_interpreters_per_pool) {
+absl::Status LoadTfLiteModel(const std::string& model_dir,
+                             SavedModelBundle* bundle,
+                             const SessionOptions& options,
+                             int num_interpreter_pools,
+                             int num_interpreters_per_pool) {
   std::unique_ptr<TfLiteSession> session;
 
-  const string& fname = io::JoinPath(model_dir, kTfLiteModelFilename);
+  const std::string& fname = io::JoinPath(model_dir, kTfLiteModelFilename);
   uint64_t size;
   TF_RETURN_IF_ERROR(Env::Default()->GetFileSize(fname, &size));
 
   std::unique_ptr<RandomAccessFile> file;
   TF_RETURN_IF_ERROR(Env::Default()->NewRandomAccessFile(fname, &file));
 
-  string model_bytes;
+  std::string model_bytes;
   model_bytes.resize(size);
   absl::string_view sv;
-  TF_RETURN_IF_ERROR(file->Read(0, size, &sv, &model_bytes[0]));
+  TF_RETURN_IF_ERROR(file->Read(0, sv, absl::MakeSpan(&model_bytes[0], size)));
 
   std::unique_ptr<TfLiteSession> tflite_session;
   TF_RETURN_IF_ERROR(TfLiteSession::Create(
@@ -69,17 +79,17 @@ Status LoadTfLiteModel(const string& model_dir, SavedModelBundle* bundle,
       num_interpreters_per_pool, &tflite_session,
       bundle->meta_graph_def.mutable_signature_def()));
   bundle->session = std::move(tflite_session);
-  return OkStatus();
+  return absl::OkStatus();
 }
 
-bool TfLiteModelFound(const string& model_dir) {
-  const string& fname = io::JoinPath(model_dir, kTfLiteModelFilename);
+bool TfLiteModelFound(const std::string& model_dir) {
+  const std::string& fname = io::JoinPath(model_dir, kTfLiteModelFilename);
   return Env::Default()->FilesExist({fname}, nullptr);
 }
 
 }  // namespace
 
-Status SavedModelBundleFactory::Create(
+absl::Status SavedModelBundleFactory::Create(
     const SessionBundleConfig& config,
     std::unique_ptr<SavedModelBundleFactory>* factory) {
   std::shared_ptr<Batcher> batcher;
@@ -88,61 +98,86 @@ Status SavedModelBundleFactory::Create(
         CreateBatchScheduler(config.batching_parameters(), &batcher));
   }
   factory->reset(new SavedModelBundleFactory(config, batcher));
-  return OkStatus();
+  return absl::OkStatus();
 }
 
-Status SavedModelBundleFactory::EstimateResourceRequirement(
-    const string& path, ResourceAllocation* estimate) const {
+absl::Status SavedModelBundleFactory::EstimateResourceRequirement(
+    const std::string& path, ResourceAllocation* estimate) const {
   return EstimateResourceFromPath(
       path, config_.resource_estimation_uses_validation_result(), estimate);
 }
 
-Status SavedModelBundleFactory::CreateSavedModelBundleWithMetadata(
-    const Loader::Metadata& metadata, const string& path,
+absl::Status SavedModelBundleFactory::CreateSavedModelBundleWithMetadata(
+    const Loader::Metadata& metadata, const std::string& path,
     std::unique_ptr<SavedModelBundle>* bundle) {
   return InternalCreateSavedModelBundle(metadata, path, bundle);
 }
 
-Status SavedModelBundleFactory::CreateSavedModelBundle(
-    const string& path, std::unique_ptr<SavedModelBundle>* bundle) {
+absl::Status SavedModelBundleFactory::CreateSavedModelBundle(
+    const std::string& path, std::unique_ptr<SavedModelBundle>* bundle) {
   return InternalCreateSavedModelBundle({}, path, bundle);
 }
 
-Status SavedModelBundleFactory::InternalCreateSavedModelBundle(
-    const absl::optional<Loader::Metadata>& metadata, const string& path,
+absl::Status SavedModelBundleFactory::InternalCreateSavedModelBundle(
+    const absl::optional<Loader::Metadata>& metadata, const std::string& path,
     std::unique_ptr<SavedModelBundle>* bundle) {
   bundle->reset(new SavedModelBundle);
-  std::unordered_set<string> saved_model_tags(
+  std::unordered_set<std::string> saved_model_tags(
       config_.saved_model_tags().begin(), config_.saved_model_tags().end());
   // Defaults to loading the meta graph def corresponding to the `serve` tag
   // if no `saved_model_tags` are specified.
   if (saved_model_tags.empty()) {
     saved_model_tags.insert(kSavedModelTagServe);
   }
+  bool is_tflite = config_.prefer_tflite_model() && TfLiteModelFound(path);
   const auto& session_options = [&]() {
     auto result = GetSessionOptions(config_);
+    std::string mixed_precision_value = config_.mixed_precision();
+    tensorflow::ConfigProto& config = result.config;
+    GraphOptions* gopt = config.mutable_graph_options();
+    RewriterConfig* rwcfg = gopt->mutable_rewrite_options();
+    if (!mixed_precision_value.empty()) {
+      if (mixed_precision_value == "bfloat16") {
+        LOG(INFO) << "Running inference with bfloat16 auto mixed precision";
+        rwcfg->set_auto_mixed_precision_onednn_bfloat16(RewriterConfig::ON);
+      } else {
+        LOG(WARNING)
+            << config_.mixed_precision()
+            << " auto mixed precision is not supported. Valid option: bfloat16";
+      }
+    }
     if (metadata.has_value()) {
       auto* session_metadata =
           result.config.mutable_experimental()->mutable_session_metadata();
       session_metadata->set_name(metadata->servable_id.name);
       session_metadata->set_version(metadata->servable_id.version);
     }
+    // Set other options from saved model config.
+    if (!is_tflite) {
+      absl::StatusOr<SavedModelConfig> model_config =
+          LoadSavedModelConfigOrDefault(path);
+      if (!model_config.ok()) {
+        LOG(WARNING) << "Failed to load saved model config: "
+                     << model_config.status();
+      } else if (model_config->has_session_overrides()) {
+        UpdateRewriterConfig(model_config->session_overrides(), rwcfg);
+      }
+    }
     return result;
   }();
 
-  bool is_tflite = config_.prefer_tflite_model() && TfLiteModelFound(path);
   if (is_tflite) {
     int num_tflite_pools = config_.num_tflite_pools();
     if (num_tflite_pools == 0 && config_.num_tflite_interpreters() > 0) {
       num_tflite_pools = config_.num_tflite_interpreters();
     }
-    TF_RETURN_IF_ERROR(LoadTfLiteModel(
-        path, bundle->get(), session_options, num_tflite_pools,
-        config_.num_tflite_interpreters_per_pool()));
+    TF_RETURN_IF_ERROR(
+        LoadTfLiteModel(path, bundle->get(), session_options, num_tflite_pools,
+                        config_.num_tflite_interpreters_per_pool()));
   } else {
     TF_RETURN_IF_ERROR(session_bundle::LoadSessionBundleOrSavedModelBundle(
         session_options, GetRunOptions(config_), path, saved_model_tags,
-        bundle->get()));
+        config_.enable_saved_model_config(), bundle->get()));
   }
   if (config_.remove_unused_fields_from_bundle_metagraph()) {
     // Save memory by removing fields in MetaGraphDef proto message stored

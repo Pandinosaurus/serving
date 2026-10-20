@@ -16,8 +16,10 @@ limitations under the License.
 #ifndef TENSORFLOW_SERVING_CORE_LOADER_HARNESS_H_
 #define TENSORFLOW_SERVING_CORE_LOADER_HARNESS_H_
 
+#include <functional>
 #include <memory>
 
+#include "absl/status/status.h"
 #include "absl/types/optional.h"
 #include "tensorflow/core/lib/core/status.h"
 #include "tensorflow/core/platform/macros.h"
@@ -26,6 +28,8 @@ limitations under the License.
 #include "tensorflow/core/platform/types.h"
 #include "tensorflow_serving/core/loader.h"
 #include "tensorflow_serving/core/servable_id.h"
+#include "tensorflow_serving/core/servable_model_type.h"
+#include "tensorflow_serving/servables/tensorflow/servable.h"
 
 namespace tensorflow {
 namespace serving {
@@ -104,7 +108,8 @@ class LoaderHarness final {
     uint64_t load_retry_interval_micros = 0;
 
     /// An (optional) function to call upon transitioning to state kError.
-    std::function<void(const ServableId& id, const Status& error)>
+    std::function<void(const ServableId& id, ServableModelType model_type,
+                       const Status& error)>
         error_callback;
   };
 
@@ -120,7 +125,8 @@ class LoaderHarness final {
       : id_(id),
         loader_(std::move(loader)),
         additional_state_(std::move(additional_state)),
-        options_(options) {}
+        options_(options),
+        should_retry_([&](absl::Status status) { return true; }) {}
 
   /// Legal to destruct iff current state is one of kNew, kDisabled or kError.
   /// Check-fails if violated.
@@ -128,6 +134,15 @@ class LoaderHarness final {
 
   /// Returns the identifier of underlying Servable.
   ServableId id() const { return id_; }
+
+  /// Returns the model type of underlying Servable, or kUnspecified if the
+  /// underlying model type cannot be determined.
+  ServableModelType model_type() const {
+    if (loader_ == nullptr) {
+      return ServableModelType::kUnspecified;
+    }
+    return loader_->model_type();
+  }
 
   /// Returns the current state of underlying Servable.
   State state() const TF_LOCKS_EXCLUDED(mu_);
@@ -168,14 +183,19 @@ class LoaderHarness final {
   /// method can be used to ensure that at most one Load() request can proceed.
   Status UnloadRequested() TF_LOCKS_EXCLUDED(mu_);
 
-  /// Cancels retrying the load of the servable. This is best-effort, and does
-  /// not preempt a Load() which is already happening, only subsequent calls.
+  /// Sets the retry behavior for the servable using a function which accepts
+  /// the status of the last load attempt and returns a boolean. If the boolean
+  /// is false, we cancel the next retry. This is best-effort, and does not
+  /// preempt a Load() which is already happening, only subsequent calls.
   ///
   /// If the retries are cancelled, the servable goes into a state dependent on
   /// the last Load() called on it. If the last Load() was successful, it will
   /// be in state kReady, else in kError.
-  void set_cancel_load_retry(bool value) TF_LOCKS_EXCLUDED(mu_);
-  bool cancel_load_retry() TF_LOCKS_EXCLUDED(mu_);
+  void set_should_retry(std::function<bool(absl::Status)> should_retry)
+      TF_LOCKS_EXCLUDED(mu_);
+
+  /// Returns true if the servable should be retried.
+  bool should_retry(absl::Status status) TF_LOCKS_EXCLUDED(mu_);
 
   /// Transitions to kUnloading, delegates to Servable::Unload(), then
   /// transitions to kDisabled when Unload() is done.
@@ -241,9 +261,11 @@ class LoaderHarness final {
   State state_ TF_GUARDED_BY(mu_) = State::kNew;
   // If state_ is kError, this will be non-OK.
   Status status_ TF_GUARDED_BY(mu_);
-  // If set to true, we don't try to retry the load of the servable, if not
-  // loaded by the first attempt.
-  bool cancel_load_retry_ TF_GUARDED_BY(mu_) = false;
+  // The retry policy for the servable. If the function returns false, we cancel
+  // the next retry. This does not affect the current load action already
+  // running.
+  // There is no retry if the last action was successful.
+  std::function<bool(absl::Status)> should_retry_ TF_GUARDED_BY(mu_);
 
   TF_DISALLOW_COPY_AND_ASSIGN(LoaderHarness);
 };

@@ -15,11 +15,14 @@ limitations under the License.
 
 #include "tensorflow_serving/core/simple_loader.h"
 
+#include <memory>
 #include <string>
 #include <vector>
 
 #include <gtest/gtest.h>
 #include "absl/memory/memory.h"
+#include "absl/status/status.h"
+#include "tensorflow/cc/saved_model/loader.h"
 #include "tensorflow/core/lib/core/errors.h"
 #include "tensorflow/core/lib/core/status_test_util.h"
 #include "tensorflow/core/lib/core/stringpiece.h"
@@ -27,6 +30,8 @@ limitations under the License.
 #include "tensorflow/core/protobuf/error_codes.pb.h"
 #include "tensorflow_serving/core/servable_data.h"
 #include "tensorflow_serving/core/servable_id.h"
+#include "tensorflow_serving/core/servable_model_type.h"
+#include "tensorflow_serving/servables/tensorflow/servable.h"
 #include "tensorflow_serving/test_util/test_util.h"
 
 namespace tensorflow {
@@ -65,7 +70,7 @@ class LoaderCreatorWithoutMetadata {
     return absl::make_unique<SimpleLoader<ServableType>>(creator, args...);
   }
 
-  static Status Load(Loader* loader) { return loader->Load(); }
+  static absl::Status Load(Loader* loader) { return loader->Load(); }
 };
 
 class LoaderCreatorWithMetadata {
@@ -83,7 +88,7 @@ class LoaderCreatorWithMetadata {
         args...);
   }
 
-  static Status Load(Loader* loader) {
+  static absl::Status Load(Loader* loader) {
     return loader->LoadWithMetadata(CreateMetadata());
   }
 };
@@ -101,11 +106,11 @@ TYPED_TEST(SimpleLoaderTest, VerifyServableStates) {
   auto loader = TypeParam::template CreateSimpleLoader<Caller>(
       [&state](std::unique_ptr<Caller>* caller) {
         caller->reset(new Caller(&state));
-        return OkStatus();
+        return absl::OkStatus();
       },
       SimpleLoader<Caller>::EstimateNoResources());
   EXPECT_EQ(State::kNone, state);
-  const Status status = TypeParam::Load(loader.get());
+  const absl::Status status = TypeParam::Load(loader.get());
   TF_EXPECT_OK(status);
   EXPECT_EQ(State::kCtor, state);
   AnyPtr servable = loader->servable();
@@ -131,11 +136,11 @@ TYPED_TEST(SimpleLoaderTest, ResourceEstimation) {
   auto loader = TypeParam::template CreateSimpleLoader<int>(
       [](std::unique_ptr<int>* servable) {
         servable->reset(new int);
-        return OkStatus();
+        return absl::OkStatus();
       },
       [&want](ResourceAllocation* estimate) {
         *estimate = want;
-        return OkStatus();
+        return absl::OkStatus();
       });
 
   {
@@ -173,15 +178,15 @@ TYPED_TEST(SimpleLoaderTest, ResourceEstimationWithPostLoadRelease) {
   auto loader = TypeParam::template CreateSimpleLoader<int>(
       [](std::unique_ptr<int>* servable) {
         servable->reset(new int);
-        return OkStatus();
+        return absl::OkStatus();
       },
       [&pre_load_resources](ResourceAllocation* estimate) {
         *estimate = pre_load_resources;
-        return OkStatus();
+        return absl::OkStatus();
       },
       absl::make_optional([&post_load_resources](ResourceAllocation* estimate) {
         *estimate = post_load_resources;
-        return OkStatus();
+        return absl::OkStatus();
       }));
 
   // Run it twice, to exercise memoization.
@@ -205,19 +210,19 @@ TYPED_TEST(SimpleLoaderTest, ResourceEstimationWithPostLoadRelease) {
 TYPED_TEST(SimpleLoaderTest, LoadError) {
   auto loader = TypeParam::template CreateSimpleLoader<Caller>(
       [](std::unique_ptr<Caller>* caller) {
-        return errors::InvalidArgument("No way!");
+        return absl::InvalidArgumentError("No way!");
       },
       SimpleLoader<Caller>::EstimateNoResources());
-  const Status status = TypeParam::Load(loader.get());
+  const absl::Status status = TypeParam::Load(loader.get());
   EXPECT_EQ(error::INVALID_ARGUMENT, status.code());
-  EXPECT_EQ("No way!", status.error_message());
+  EXPECT_EQ("No way!", status.message());
 }
 
 TEST(SimpleLoaderCompatibilityTest, WithoutMetadata) {
-  auto loader_without_metadata = absl::make_unique<SimpleLoader<int>>(
+  auto loader_without_metadata = std::make_unique<SimpleLoader<int>>(
       [](std::unique_ptr<int>* servable) {
         servable->reset(new int);
-        return OkStatus();
+        return absl::OkStatus();
       },
       SimpleLoader<int>::EstimateNoResources());
   // If the creator without metadata is used, both Load() and LoadWithMetadata()
@@ -227,17 +232,17 @@ TEST(SimpleLoaderCompatibilityTest, WithoutMetadata) {
 }
 
 TEST(SimpleLoaderCompatibilityTest, WithMetadata) {
-  auto loader_with_metadata = absl::make_unique<SimpleLoader<int>>(
+  auto loader_with_metadata = std::make_unique<SimpleLoader<int>>(
       [](const Loader::Metadata& metadata, std::unique_ptr<int>* servable) {
         const auto& expected_metadata = CreateMetadata();
         EXPECT_EQ(expected_metadata.servable_id, metadata.servable_id);
         servable->reset(new int);
-        return OkStatus();
+        return absl::OkStatus();
       },
       SimpleLoader<int>::EstimateNoResources());
   // If the creator with metadata is used, we allow only LoadWithMetadata()
   // to be invoked.
-  const Status error_status = loader_with_metadata->Load();
+  const absl::Status error_status = loader_with_metadata->Load();
   EXPECT_EQ(error::FAILED_PRECONDITION, error_status.code());
   TF_EXPECT_OK(loader_with_metadata->LoadWithMetadata(CreateMetadata()));
 }
@@ -259,23 +264,23 @@ class SimpleLoaderSourceAdapterImpl final
 };
 
 TEST(SimpleLoaderSourceAdapterTest, Basic) {
-  SimpleLoaderSourceAdapterImpl<string, string> adapter(
-      [](const string& data, std::unique_ptr<string>* servable) {
-        servable->reset(new string);
-        **servable = strings::StrCat(data, "_was_here");
-        return OkStatus();
+  SimpleLoaderSourceAdapterImpl<std::string, std::string> adapter(
+      [](const std::string& data, std::unique_ptr<std::string>* servable) {
+        servable->reset(new std::string);
+        **servable = absl::StrCat(data, "_was_here");
+        return absl::OkStatus();
       },
-      [](const string& data, ResourceAllocation* output) {
+      [](const std::string& data, ResourceAllocation* output) {
         ResourceAllocation::Entry* entry = output->add_resource_quantities();
         entry->mutable_resource()->set_device(data);
         entry->set_quantity(42);
-        return OkStatus();
+        return absl::OkStatus();
       });
 
-  const string kServableName = "test_servable_name";
+  const std::string kServableName = "test_servable_name";
   bool callback_called;
   adapter.SetAspiredVersionsCallback(
-      [&](const StringPiece servable_name,
+      [&](const absl::string_view servable_name,
           std::vector<ServableData<std::unique_ptr<Loader>>> versions) {
         callback_called = true;
         EXPECT_EQ(kServableName, servable_name);
@@ -293,11 +298,12 @@ TEST(SimpleLoaderSourceAdapterTest, Basic) {
                                         "} ")));
         TF_ASSERT_OK(loader->Load());
         AnyPtr servable = loader->servable();
-        ASSERT_TRUE(servable.get<string>() != nullptr);
-        EXPECT_EQ("test_data_was_here", *servable.get<string>());
+        ASSERT_TRUE(servable.get<std::string>() != nullptr);
+        EXPECT_EQ("test_data_was_here", *servable.get<std::string>());
       });
   adapter.SetAspiredVersions(
-      kServableName, {ServableData<string>({kServableName, 0}, "test_data")});
+      kServableName,
+      {ServableData<std::string>({kServableName, 0}, "test_data")});
   EXPECT_TRUE(callback_called);
 }
 
@@ -307,25 +313,29 @@ TEST(SimpleLoaderSourceAdapterTest, OkayToDeleteAdapter) {
   std::unique_ptr<Loader> loader;
   {
     // Allocate 'adapter' on the heap so ASAN will catch a use-after-free.
-    auto adapter = std::unique_ptr<SimpleLoaderSourceAdapter<string, string>>(
-        new SimpleLoaderSourceAdapterImpl<string, string>(
-            [](const string& data, std::unique_ptr<string>* servable) {
-              servable->reset(new string);
-              **servable = strings::StrCat(data, "_was_here");
-              return OkStatus();
-            },
-            SimpleLoaderSourceAdapter<string, string>::EstimateNoResources()));
+    auto adapter =
+        std::unique_ptr<SimpleLoaderSourceAdapter<std::string, std::string>>(
+            new SimpleLoaderSourceAdapterImpl<std::string, std::string>(
+                [](const std::string& data,
+                   std::unique_ptr<std::string>* servable) {
+                  servable->reset(new std::string);
+                  **servable = absl::StrCat(data, "_was_here");
+                  return absl::OkStatus();
+                },
+                SimpleLoaderSourceAdapter<std::string,
+                                          std::string>::EstimateNoResources()));
 
-    const string kServableName = "test_servable_name";
+    const std::string kServableName = "test_servable_name";
     adapter->SetAspiredVersionsCallback(
-        [&](const StringPiece servable_name,
+        [&](const absl::string_view servable_name,
             std::vector<ServableData<std::unique_ptr<Loader>>> versions) {
           ASSERT_EQ(1, versions.size());
           TF_ASSERT_OK(versions[0].status());
           loader = versions[0].ConsumeDataOrDie();
         });
     adapter->SetAspiredVersions(
-        kServableName, {ServableData<string>({kServableName, 0}, "test_data")});
+        kServableName,
+        {ServableData<std::string>({kServableName, 0}, "test_data")});
 
     // Let 'adapter' fall out of scope and be deleted.
   }
@@ -335,6 +345,49 @@ TEST(SimpleLoaderSourceAdapterTest, OkayToDeleteAdapter) {
   ResourceAllocation estimate_given;
   TF_ASSERT_OK(loader->EstimateResources(&estimate_given));
   TF_ASSERT_OK(loader->Load());
+}
+
+TEST(SimpleLoaderTest, LoaderModelType) {
+  auto loader = std::make_unique<SimpleLoader<int>>(
+      [](std::unique_ptr<int>* servable) {
+        servable->reset(new int);
+        return absl::OkStatus();
+      },
+      SimpleLoader<int>::EstimateNoResources());
+  TF_ASSERT_OK(loader->Load());
+  EXPECT_EQ(loader->model_type(), ServableModelType::kUnspecified);
+}
+
+TEST(SimpleLoaderTest, LoaderModelTypeSavedModelBundle) {
+  auto loader = std::make_unique<SimpleLoader<SavedModelBundle>>(
+      [](std::unique_ptr<SavedModelBundle>* servable) {
+        servable->reset(new SavedModelBundle());
+        return absl::OkStatus();
+      },
+      SimpleLoader<SavedModelBundle>::EstimateNoResources());
+  TF_ASSERT_OK(loader->Load());
+  EXPECT_EQ(loader->model_type(), ServableModelType::kTensorflow);
+}
+
+class MyServable : public EmptyServable {
+ public:
+  MyServable() {}
+  ~MyServable() override = default;
+
+  ServableModelType model_type() const override {
+    return ServableModelType::kTensorflow;
+  }
+};
+
+TEST(SimpleLoaderTest, LoaderModelTypeServable) {
+  auto loader = std::make_unique<SimpleLoader<MyServable>>(
+      [](std::unique_ptr<MyServable>* servable) {
+        servable->reset(new MyServable());
+        return absl::OkStatus();
+      },
+      SimpleLoader<MyServable>::EstimateNoResources());
+  TF_ASSERT_OK(loader->Load());
+  EXPECT_EQ(loader->model_type(), ServableModelType::kTensorflow);
 }
 
 }  // namespace

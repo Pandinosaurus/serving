@@ -15,7 +15,10 @@ limitations under the License.
 
 #include "tensorflow_serving/batching/batching_util.h"
 
+#include <map>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "tensorflow/core/framework/register_types.h"
 #include "tensorflow/core/framework/tensor.h"
@@ -68,42 +71,42 @@ Eigen::array<OneDimPadding, num_dims> CreatePadding(
 // functor produces padded_tensor of shape [1, 4, 7].
 template <typename T, int num_dims>
 struct PadTensor {
-  Status operator()(Tensor input,
-                    const Eigen::array<OneDimPadding, num_dims>& padding,
-                    Tensor* output) {
+  absl::Status operator()(Tensor input,
+                          const Eigen::array<OneDimPadding, num_dims>& padding,
+                          Tensor* output) {
     TensorShape output_shape;
     for (int d = 0; d < num_dims; ++d) {
       // Pad before existing elements.
-      const int32 before_d = padding[d].first;
+      const int32_t before_d = padding[d].first;
       // Pad after existing elements.
-      const int32 after_d = padding[d].second;
+      const int32_t after_d = padding[d].second;
       output_shape.AddDim(before_d + input.dim_size(d) + after_d);
     }
     if (output_shape.num_elements() == input.NumElements()) {
       bool result = output->CopyFrom(input, output_shape);
       if (!result) {
-        return errors::Internal("Couldn't create output.");
+        return absl::InternalError("Couldn't create output.");
       }
-      return OkStatus();
+      return absl::OkStatus();
     }
     if (input.NumElements() < 1) {
-      return errors::InvalidArgument(
+      return absl::InvalidArgumentError(
           "Got empty tensor in batch of non-empty tensors.");
     }
     *output = Tensor(input.dtype(), output_shape);
     typename TTypes<T, num_dims>::Tensor inputs = input.tensor<T, num_dims>();
     T pad_value(input.flat<T>()(0));  // using existing values in padding
     output->tensor<T, num_dims>() = inputs.pad(padding, pad_value);
-    return OkStatus();
+    return absl::OkStatus();
   }
 };
 
 // Invokes padding procedure for specific tensor ranks.
 // Only ranks from 1 to 6 are supported (like in PadOp).
 template <typename T>
-Status PadTensorOfSpecificType(const Tensor& tensor,
-                               absl::Span<const int> max_dim_sizes,
-                               Tensor* output_tensor) {
+absl::Status PadTensorOfSpecificType(const Tensor& tensor,
+                                     absl::Span<const int> max_dim_sizes,
+                                     Tensor* output_tensor) {
   int num_dims = tensor.dims();
   switch (num_dims) {
     case 1: {
@@ -145,27 +148,27 @@ Status PadTensorOfSpecificType(const Tensor& tensor,
     default:
       // only ranks from 1 to 6 are supported
       // (like in tensorflow/core/kernels/pad_op.cc)
-      return errors::InvalidArgument(
+      return absl::InvalidArgumentError(
           "Only tensors with rank from 1 to 6 can be padded.");
   }
 }
 
-std::map<string, std::vector<int>> CalculateMaxDimSizes(
-    const std::vector<std::vector<std::pair<string, Tensor>>>& batch) {
-  std::map<string, std::vector<int>> max_dim_sizes;
+std::map<std::string, std::vector<int>> CalculateMaxDimSizes(
+    const std::vector<std::vector<std::pair<std::string, Tensor>>>& batch) {
+  std::map<std::string, std::vector<int>> max_dim_sizes;
   // Populate 'max_dim_sizes'
   // init
-  const std::vector<std::pair<string, Tensor>>& task_inputs = batch[0];
+  const std::vector<std::pair<std::string, Tensor>>& task_inputs = batch[0];
   for (const auto& entry : task_inputs) {
-    const string& tensor_name = entry.first;
+    const std::string& tensor_name = entry.first;
     const Tensor& tensor = entry.second;
     max_dim_sizes[tensor_name] = std::vector<int>(tensor.dims(), 0);
   }
   // fill
   for (int i = 0; i < batch.size(); ++i) {
-    const std::vector<std::pair<string, Tensor>>& task_inputs = batch[i];
+    const std::vector<std::pair<std::string, Tensor>>& task_inputs = batch[i];
     for (const auto& entry : task_inputs) {
-      const string& tensor_name = entry.first;
+      const std::string& tensor_name = entry.first;
       const Tensor& tensor = entry.second;
 
       std::vector<int>& max_dim_sizes_for_one_input =
@@ -181,10 +184,11 @@ std::map<string, std::vector<int>> CalculateMaxDimSizes(
   return max_dim_sizes;
 }
 
-Status AddPadding(const Tensor& tensor, absl::Span<const int> max_dim_sizes,
-                  Tensor* padded_tensor) {
+absl::Status AddPadding(const Tensor& tensor,
+                        absl::Span<const int> max_dim_sizes,
+                        Tensor* padded_tensor) {
   const DataType input_dtype = tensor.dtype();
-  Status padding_status;
+  absl::Status padding_status;
 #define CASE(type)                                                           \
   case DataTypeToEnum<type>::value: {                                        \
     padding_status =                                                         \
@@ -198,7 +202,7 @@ Status AddPadding(const Tensor& tensor, absl::Span<const int> max_dim_sizes,
     TF_CALL_quint16(CASE);
     TF_CALL_qint16(CASE);
     default:
-      padding_status = errors::InvalidArgument("Unsupported type");
+      padding_status = absl::InvalidArgumentError("Unsupported type");
   }
 #undef CASE
   return padding_status;

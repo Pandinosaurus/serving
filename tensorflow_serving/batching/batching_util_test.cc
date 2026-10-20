@@ -15,6 +15,11 @@ limitations under the License.
 
 #include "tensorflow_serving/batching/batching_util.h"
 
+#include <map>
+#include <string>
+#include <utility>
+#include <vector>
+
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "tensorflow/core/framework/register_types.h"
@@ -33,9 +38,9 @@ using ::testing::UnorderedElementsAre;
 // Creates vector of pairs (tensor_name, tensor_value), where tensors
 // have shapes as specified in shapes.
 // Tensor with shape shapes[i] has tensor_name "x" + std::to_string(i).
-std::vector<std::pair<string, Tensor>> CreateInputsWithTensorShapes(
+std::vector<std::pair<std::string, Tensor>> CreateInputsWithTensorShapes(
     const std::vector<TensorShape>& shapes) {
-  std::vector<std::pair<string, Tensor>> inputs;
+  std::vector<std::pair<std::string, Tensor>> inputs;
   for (int i = 0; i < shapes.size(); ++i) {
     inputs.push_back({"x" + std::to_string(i), Tensor(DT_FLOAT, shapes[i])});
   }
@@ -44,13 +49,14 @@ std::vector<std::pair<string, Tensor>> CreateInputsWithTensorShapes(
 
 TEST(BatchingUtilTest, CalculateMaxDimSizes) {
   const std::vector<TensorShape> shapes1{{10, 20, 30}, {10, 100}};
-  std::vector<std::pair<string, Tensor>> inputs1 =
+  std::vector<std::pair<std::string, Tensor>> inputs1 =
       CreateInputsWithTensorShapes(shapes1);
   const std::vector<TensorShape> shapes2{{20, 50, 15}, {20, 101}};
-  std::vector<std::pair<string, Tensor>> inputs2 =
+  std::vector<std::pair<std::string, Tensor>> inputs2 =
       CreateInputsWithTensorShapes(shapes2);
-  std::vector<std::vector<std::pair<string, Tensor>>> batch{inputs1, inputs2};
-  std::map<string, std::vector<int>> max_dim_sizes =
+  std::vector<std::vector<std::pair<std::string, Tensor>>> batch{inputs1,
+                                                                 inputs2};
+  std::map<std::string, std::vector<int>> max_dim_sizes =
       CalculateMaxDimSizes(batch);
   EXPECT_THAT(max_dim_sizes,
               UnorderedElementsAre(Pair("x0", ElementsAre(20, 50, 30)),
@@ -64,7 +70,7 @@ TEST(BatchingUtilTest, AddPadding) {
       DT_UINT16,     DT_INT8,   DT_STRING, DT_BOOL,    DT_COMPLEX64,
       DT_COMPLEX128, DT_INT64,  DT_QINT8,  DT_QUINT8,  DT_QINT16,
       DT_QUINT16,    DT_QINT32, DT_HALF,   DT_RESOURCE};
-  Status padding_status;
+  absl::Status padding_status;
   for (DataType type : types) {
     Tensor tensor(type, {10, 20, 30});
 #define INIT_TYPE(T)                      \
@@ -79,7 +85,7 @@ TEST(BatchingUtilTest, AddPadding) {
 #undef INIT_TYPE
     Tensor padded_tensor;
     padding_status = AddPadding(tensor, max_dim_sizes, &padded_tensor);
-    ASSERT_EQ(OkStatus(), padding_status);
+    ASSERT_EQ(absl::OkStatus(), padding_status);
     EXPECT_EQ(TensorShape({10, 100, 200}), padded_tensor.shape());
   }
 }
@@ -88,7 +94,7 @@ TEST(BatchingUtilTest, AddPaddingTensorWithUnsupportedRank) {
   const std::vector<int> max_dim_sizes{1, 1, 1, 1, 1, 1, 1};
   const Tensor tensor(DT_FLOAT, {1, 1, 1, 1, 1, 1, 1});
   Tensor padded_tensor;
-  ASSERT_EQ(errors::InvalidArgument(
+  ASSERT_EQ(absl::InvalidArgumentError(
                 "Only tensors with rank from 1 to 6 can be padded."),
             AddPadding(tensor, max_dim_sizes, &padded_tensor));
 }

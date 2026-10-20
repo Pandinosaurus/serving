@@ -17,15 +17,16 @@ limitations under the License.
 #define TENSORFLOW_SERVING_BATCHING_STREAMING_BATCH_SCHEDULER_H_
 
 #include <stddef.h>
+
 #include <algorithm>
 #include <functional>
 #include <memory>
 #include <string>
 #include <utility>
 
+#include "absl/synchronization/notification.h"
 #include "tensorflow/core/kernels/batching_util/batch_scheduler.h"
 #include "tensorflow/core/lib/core/errors.h"
-#include "tensorflow/core/lib/core/notification.h"
 #include "tensorflow/core/lib/core/status.h"
 #include "tensorflow/core/lib/core/threadpool.h"
 #include "tensorflow/core/platform/cpu_info.h"
@@ -283,16 +284,19 @@ class SingleTaskScheduler {
   uint64_t last_task_time_ = 0;
 
   // A notification for stopping the thread, during destruction.
-  Notification stop_;
+  absl::Notification stop_;
 
   // The name of 'thread_'.
   const string thread_name_;
 
-  // A background thread that runs closures supplied via Schedule().
-  std::unique_ptr<Thread> thread_;
-
   // How long to wait if there are no scheduled tasks, in microseconds.
   const uint64_t no_tasks_wait_time_micros_;
+
+  // A background thread that runs closures supplied via Schedule().
+  //
+  // NOTE: This must be the last member, to ensure it is destroyed first. We
+  // must join the thread before destroying other members it might be accessing.
+  std::unique_ptr<Thread> thread_;
 
   TF_DISALLOW_COPY_AND_ASSIGN(SingleTaskScheduler);
 };

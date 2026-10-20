@@ -15,6 +15,10 @@ limitations under the License.
 
 #include "tensorflow_serving/servables/tensorflow/util.h"
 
+#include <map>
+#include <set>
+#include <vector>
+
 #include "google/protobuf/wrappers.pb.h"
 #include "tensorflow/cc/saved_model/signature_constants.h"
 #include "tensorflow/core/example/example.pb.h"
@@ -74,25 +78,25 @@ class InputUtilTest : public ::testing::Test {
 };
 
 TEST_F(InputUtilTest, Empty_KindNotSet) {
-  const Status status = InputToSerializedExampleTensor(input_, &tensor_);
+  const absl::Status status = InputToSerializedExampleTensor(input_, &tensor_);
   ASSERT_FALSE(status.ok());
-  EXPECT_THAT(status.error_message(), HasSubstr("Input is empty"));
+  EXPECT_THAT(status.message(), HasSubstr("Input is empty"));
 }
 
 TEST_F(InputUtilTest, Empty_ExampleList) {
   input_.mutable_example_list();
 
-  const Status status = InputToSerializedExampleTensor(input_, &tensor_);
+  const absl::Status status = InputToSerializedExampleTensor(input_, &tensor_);
   ASSERT_FALSE(status.ok());
-  EXPECT_THAT(status.error_message(), HasSubstr("Input is empty"));
+  EXPECT_THAT(status.message(), HasSubstr("Input is empty"));
 }
 
 TEST_F(InputUtilTest, Empty_ExampleListWithContext) {
   input_.mutable_example_list_with_context();
 
-  const Status status = InputToSerializedExampleTensor(input_, &tensor_);
+  const absl::Status status = InputToSerializedExampleTensor(input_, &tensor_);
   ASSERT_FALSE(status.ok());
-  EXPECT_THAT(status.error_message(), HasSubstr("Input is empty"));
+  EXPECT_THAT(status.message(), HasSubstr("Input is empty"));
 }
 
 TEST_F(InputUtilTest, ExampleList) {
@@ -194,9 +198,9 @@ TEST_F(InputUtilTest, ExampleListWithContext_OnlyContext) {
   // context is specified).
   *input_.mutable_example_list_with_context()->mutable_context() = example_C();
 
-  const Status status = InputToSerializedExampleTensor(input_, &tensor_);
+  const absl::Status status = InputToSerializedExampleTensor(input_, &tensor_);
   ASSERT_FALSE(status.ok());
-  EXPECT_THAT(status.error_message(), HasSubstr("Input is empty"));
+  EXPECT_THAT(status.message(), HasSubstr("Input is empty"));
 }
 
 TEST_F(InputUtilTest, RequestNumExamplesStreamz) {
@@ -284,22 +288,24 @@ TEST(SignatureMethodNameCheckFeature, SetGet) {
 }
 
 TEST(ResourceEstimatorTest, EstimateResourceFromPathUsingDiskState) {
-  const string export_dir = "/foo/bar";
-  const string child = "child";
-  const string child_path = io::JoinPath(export_dir, child);
+  const std::string export_dir = "/foo/bar";
+  const std::string child = "child";
+  const std::string child_path = io::JoinPath(export_dir, child);
   const double file_size = 100;
 
   // Set up the expectation that the directory contains exactly one child with
   // the given file size.
   test_util::MockFileProbingEnv env;
-  EXPECT_CALL(env, FileExists(export_dir)).WillRepeatedly(Return(OkStatus()));
+  EXPECT_CALL(env, FileExists(export_dir))
+      .WillRepeatedly(Return(absl::OkStatus()));
   EXPECT_CALL(env, GetChildren(export_dir, _))
-      .WillRepeatedly(DoAll(SetArgPointee<1>(std::vector<string>({child})),
-                            Return(OkStatus())));
+      .WillRepeatedly(DoAll(SetArgPointee<1>(std::vector<std::string>({child})),
+                            Return(absl::OkStatus())));
   EXPECT_CALL(env, IsDirectory(child_path))
-      .WillRepeatedly(Return(errors::FailedPrecondition("")));
+      .WillRepeatedly(Return(absl::FailedPreconditionError("")));
   EXPECT_CALL(env, GetFileSize(child_path, _))
-      .WillRepeatedly(DoAll(SetArgPointee<1>(file_size), Return(OkStatus())));
+      .WillRepeatedly(
+          DoAll(SetArgPointee<1>(file_size), Return(absl::OkStatus())));
 
   ResourceAllocation actual;
   TF_ASSERT_OK(
@@ -311,14 +317,15 @@ TEST(ResourceEstimatorTest, EstimateResourceFromPathUsingDiskState) {
 }
 
 TEST(GetMapKeysTest, GetKeys) {
-  std::map<string, string> map = {std::pair<string, string>("key1", "value1"),
-                                  std::pair<string, string>("key2", "value2")};
+  std::map<std::string, std::string> map = {
+      std::pair<std::string, std::string>("key1", "value1"),
+      std::pair<std::string, std::string>("key2", "value2")};
   const auto result = GetMapKeys(map);
   EXPECT_THAT(result, ::testing::UnorderedElementsAre("key1", "key2"));
 }
 
 TEST(SetDifferenceTEST, GetDiff) {
-  std::set<string> result;
+  std::set<std::string> result;
   EXPECT_THAT(SetDifference({"a", "b", "c"}, {"a", "b"}),
               ::testing::UnorderedElementsAre("c"));
   EXPECT_THAT(SetDifference({"a", "b", "c"}, {"a", "b", "d"}),

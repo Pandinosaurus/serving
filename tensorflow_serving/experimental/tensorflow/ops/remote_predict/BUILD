@@ -1,7 +1,14 @@
 # Description:
 # Remote Predict Op Prototype
+
+# buildifier: disable=same-origin-load
+# Placeholder: load py_test
 load("@org_tensorflow//tensorflow:tensorflow.bzl", "tf_custom_op_library", "tf_gen_op_libs", "tf_gen_op_wrapper_cc", "tf_gen_op_wrapper_py", "tf_kernel_library")
 load("@org_tensorflow//tensorflow:tensorflow.bzl", "tf_custom_op_py_library")
+# buildifier: enable=same-origin-load
+
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
 
 licenses(["notice"])
 
@@ -20,12 +27,19 @@ cc_library(
         "//tensorflow_serving/apis:predict_cc_proto",
         "//tensorflow_serving/apis:prediction_service_cc_proto",
         "@com_github_grpc_grpc//:grpc++",
+        "@com_google_absl//absl/flags:flag",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/time",
         "@com_google_protobuf//:protobuf_lite",
+        "@com_google_protobuf//:wrappers_cc_proto",
         "@org_tensorflow//tensorflow/core:framework_headers_lib",
         "@org_tensorflow//tensorflow/core:protos_all_cc",
         "@org_tensorflow//tensorflow/core/kernels:ops_util_hdrs",
+        "@org_tensorflow//tensorflow/core/kernels/batching_util:warmup",
+        "@org_tensorflow//tensorflow/core/lib/gtl:cleanup",
+        "@org_tensorflow//tensorflow/core/platform:status",
         "@org_tensorflow//tensorflow/core/platform:statusor",
     ],
     alwayslink = 1,
@@ -34,6 +48,7 @@ cc_library(
 tf_gen_op_libs(
     op_lib_names = ["remote_predict_op"],
     deps = [
+        "@com_google_absl//absl/flags:flag",
         "@org_tensorflow//tensorflow/core:lib",
     ],
 )
@@ -48,10 +63,6 @@ cc_library(
     name = "remote_predict_ops_cc",
     srcs = ["cc/ops/remote_predict_op.cc"],
     hdrs = ["cc/ops/remote_predict_op.h"],
-    visibility = [
-        "//tensorflow_serving/experimental/example:__subpackages__",
-        "//tensorflow_serving/model_servers:__subpackages__",
-    ],
     deps = [
         ":remote_predict_op_op_lib",
         "@org_tensorflow//tensorflow/cc:const_op",
@@ -78,17 +89,16 @@ tf_kernel_library(
         "kernels/prediction_service_grpc.h",
         "kernels/remote_predict_op_kernel.h",
     ],
-    visibility = [
-        "//tensorflow_serving/experimental/example:__subpackages__",
-        "//tensorflow_serving/model_servers:__subpackages__",
-    ],
     deps = [
         ":remote_predict_op_op_lib",
         "//tensorflow_serving/apis:model_cc_proto",
         "//tensorflow_serving/apis:predict_cc_proto",
         "//tensorflow_serving/apis:prediction_service_cc_proto",
         "@com_github_grpc_grpc//:grpc++",
+        "@com_google_absl//absl/flags:flag",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/time",
         "@com_google_protobuf//:cc_wkt_protos",
         "@com_google_protobuf//:protobuf_lite",
@@ -96,7 +106,7 @@ tf_kernel_library(
         "@org_tensorflow//tensorflow/core:lib",
         "@org_tensorflow//tensorflow/core:protos_all_cc",
         "@org_tensorflow//tensorflow/core/kernels:ops_util",
-        "@org_tensorflow//tensorflow/core/kernels:split_lib",
+        "@org_tensorflow//tensorflow/core/kernels/batching_util:warmup",
         "@org_tensorflow//tensorflow/core/platform:statusor",
     ],
 )
@@ -117,11 +127,13 @@ tf_custom_op_py_library(
         ":remote_predict_op_kernel",
         ":remote_predict_op_op_lib",
     ],
-    srcs_version = "PY2AND3",
+    tags = [
+        "manual",
+    ],
     visibility = ["//tensorflow_serving/experimental/example:__subpackages__"],
     deps = [
         ":gen_remote_predict_op",
-        "@org_tensorflow//tensorflow/python:framework_for_generated_wrappers",
+        "@org_tensorflow//tensorflow/python/framework:for_generated_wrappers",
     ],
 )
 
@@ -138,20 +150,27 @@ cc_test(
         "//tensorflow_serving/apis:predict_cc_proto",
         "//tensorflow_serving/apis:prediction_service_cc_proto",
         "//tensorflow_serving/core/test_util:test_main",
+        "@com_google_absl//absl/cleanup",
+        "@com_google_absl//absl/flags:flag",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/time",
         "@com_google_protobuf//:cc_wkt_protos",
         "@com_google_protobuf//:protobuf_lite",
         "@org_tensorflow//tensorflow/cc:client_session",
         "@org_tensorflow//tensorflow/cc:const_op",
         "@org_tensorflow//tensorflow/core:all_kernels",
+        "@org_tensorflow//tensorflow/core:core_cpu",
         "@org_tensorflow//tensorflow/core:direct_session",
         "@org_tensorflow//tensorflow/core:framework",
         "@org_tensorflow//tensorflow/core:lib",
         "@org_tensorflow//tensorflow/core:protos_all_cc",
+        "@org_tensorflow//tensorflow/core:session_options",
         "@org_tensorflow//tensorflow/core:test",
         "@org_tensorflow//tensorflow/core:testlib",
         "@org_tensorflow//tensorflow/core/kernels:ops_util",
+        "@org_tensorflow//tensorflow/core/kernels/batching_util:warmup",
     ],
 )
 
@@ -192,7 +211,5 @@ filegroup(
             "**/OWNERS",
         ],
     ),
-    visibility = [
-        "//tensorflow_serving:__subpackages__",
-    ],
+    visibility = ["//visibility:private"],
 )

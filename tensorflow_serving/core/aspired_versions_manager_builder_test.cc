@@ -15,8 +15,14 @@ limitations under the License.
 
 #include "tensorflow_serving/core/aspired_versions_manager_builder.h"
 
+#include <functional>
+#include <memory>
+#include <utility>
+#include <vector>
+
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/log/check.h"
 #include "tensorflow/core/lib/strings/strcat.h"
 #include "tensorflow_serving/core/availability_preserving_policy.h"
 #include "tensorflow_serving/core/servable_data.h"
@@ -47,8 +53,8 @@ class AspiredVersionsManagerBuilderTest : public ::testing::Test {
     manager_options.servable_event_bus = servable_event_bus_.get();
     manager_options.aspired_version_policy.reset(
         new AvailabilityPreservingPolicy());
-    TF_CHECK_OK(AspiredVersionsManagerBuilder::Create(
-        std::move(manager_options), &builder_));
+    CHECK_OK(AspiredVersionsManagerBuilder::Create(std::move(manager_options),
+                                                   &builder_));
   }
 
   std::unique_ptr<AspiredVersionsManagerBuilder> builder_;
@@ -86,7 +92,7 @@ TEST_F(AspiredVersionsManagerBuilderTest, AddSourceChainConnection) {
       servable_state_monitor_, id, {ServableState::ManagerState::kAvailable});
 
   ServableHandle<StoragePath> handle;
-  const Status status =
+  const absl::Status status =
       manager->GetServableHandle(ServableRequest::FromId(id), &handle);
   EXPECT_EQ(StoragePath("/storage/path/adapter0/adapter1/adapter2"), *handle);
 }
@@ -94,9 +100,9 @@ TEST_F(AspiredVersionsManagerBuilderTest, AddSourceChainConnection) {
 TEST_F(AspiredVersionsManagerBuilderTest, AddSourceChainDestructionOrder) {
   // The destructor of each adapter pushes its own name into this vector, and we
   // use it to verify the destruction order.
-  std::vector<string> destruct_order;
-  std::function<void(const string&)> call_on_destruct =
-      [&](const string& suffix) { destruct_order.push_back(suffix); };
+  std::vector<std::string> destruct_order;
+  std::function<void(const std::string&)> call_on_destruct =
+      [&](const std::string& suffix) { destruct_order.push_back(suffix); };
   auto* const adapter0 =
       new FakeStoragePathSourceAdapter("adapter0", call_on_destruct);
   auto adapter1 = std::unique_ptr<FakeStoragePathSourceAdapter>(

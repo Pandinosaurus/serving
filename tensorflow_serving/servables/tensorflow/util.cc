@@ -15,7 +15,14 @@ limitations under the License.
 
 #include "tensorflow_serving/servables/tensorflow/util.h"
 
+#include <algorithm>
 #include <atomic>
+#include <cstdlib>
+#include <deque>
+#include <iterator>
+#include <set>
+#include <utility>
+#include <vector>
 
 #include "google/protobuf/wrappers.pb.h"
 #include "tensorflow/cc/saved_model/signature_constants.h"
@@ -84,9 +91,9 @@ auto* request_latency = monitoring::Sampler<3>::New(
 // Returns the number of examples in the Input.
 int NumInputExamples(const internal::SerializedInput& input) {
   switch (input.kind_case()) {
-    case Input::KindCase::kExampleList:
+    case internal::SerializedInput::KindCase::kExampleList:
       return input.example_list().examples_size();
-    case Input::KindCase::kExampleListWithContext:
+    case internal::SerializedInput::KindCase::kExampleListWithContext:
       return input.example_list_with_context().examples_size();
     default:
       break;
@@ -94,7 +101,7 @@ int NumInputExamples(const internal::SerializedInput& input) {
   return 0;
 }
 
-std::atomic<bool> signature_method_check{true};
+std::atomic<bool> signature_method_check{false};
 
 }  // namespace
 
@@ -107,9 +114,11 @@ monitoring::Counter<1>* GetExampleCountTotal() { return example_count_total; }
 }  // namespace internal
 
 // Metrics by model
-void RecordModelRequestCount(const string& model_name, const Status& status) {
+void RecordModelRequestCount(const std::string& model_name,
+                             const absl::Status& status) {
   model_request_status_count_total
-      ->GetCell(model_name, error::Code_Name(status.code()))
+      ->GetCell(model_name,
+                error::Code_Name(static_cast<error::Code>(status.code())))
       ->IncrementBy(1);
 }
 
@@ -117,12 +126,13 @@ void SetSignatureMethodNameCheckFeature(bool v) { signature_method_check = v; }
 
 bool GetSignatureMethodNameCheckFeature() { return signature_method_check; }
 
-void RecordRequestExampleCount(const string& model_name, size_t count) {
+void RecordRequestExampleCount(const std::string& model_name, size_t count) {
   example_counts->GetCell(model_name)->Add(count);
   example_count_total->GetCell(model_name)->IncrementBy(count);
 }
 
-Status InputToSerializedExampleTensor(const Input& input, Tensor* examples) {
+absl::Status InputToSerializedExampleTensor(const Input& input,
+                                            Tensor* examples) {
   internal::SerializedInput serialized_input;
   // There's a reason we serialize and then parse 'input' in this way:
   // 'example_list' and 'example_list_with_context' are lazily parsed
@@ -138,30 +148,30 @@ Status InputToSerializedExampleTensor(const Input& input, Tensor* examples) {
     // Benchmark ('BM_InputToSerializedExample') can help measure the effect of
     // changes in the future.
     absl::Cord tmp;
-    if (!input.SerializeToCord(&tmp)) {
-      return errors::InvalidArgument("Input failed to serialize. Size = ",
-                                     input.ByteSizeLong());
+    if (!input.SerializeToString(&tmp)) {
+      return absl::InvalidArgumentError(absl::StrCat(
+          "Input failed to serialize. Size = ", input.ByteSizeLong()));
     }
-    parse_serialized_input_ok = serialized_input.ParseFromCord(tmp);
+    parse_serialized_input_ok = serialized_input.ParseFromString(tmp);
   }
 #else
   parse_serialized_input_ok =
       serialized_input.ParseFromString(input.SerializeAsString());
 #endif
   if (!parse_serialized_input_ok) {
-    return errors::Internal("Error parsing serialized input.");
+    return absl::InternalError("Error parsing serialized input.");
   }
 
   const int64_t num_examples = NumInputExamples(serialized_input);
   if (num_examples == 0) {
-    return errors::InvalidArgument("Input is empty.");
+    return absl::InvalidArgumentError("Input is empty.");
   }
   *examples = Tensor(DT_STRING, TensorShape({num_examples}));
   switch (serialized_input.kind_case()) {
-    case Input::KindCase::KIND_NOT_SET:
+    case internal::SerializedInput::KindCase::KIND_NOT_SET:
       break;
 
-    case Input::KindCase::kExampleList: {
+    case internal::SerializedInput::KindCase::kExampleList: {
       auto input_vec = examples->vec<tstring>();
       int input_vec_index = 0;
       for (const auto& entry : serialized_input.example_list().examples()) {
@@ -170,7 +180,7 @@ Status InputToSerializedExampleTensor(const Input& input, Tensor* examples) {
       break;
     }
 
-    case Input::KindCase::kExampleListWithContext: {
+    case internal::SerializedInput::KindCase::kExampleListWithContext: {
       const auto& context =
           serialized_input.example_list_with_context().context();
       auto input_vec = examples->vec<tstring>();
@@ -194,16 +204,16 @@ Status InputToSerializedExampleTensor(const Input& input, Tensor* examples) {
     } break;
 
     default:
-      return errors::Unimplemented(
-          "Input with kind ", serialized_input.kind_case(), " not supported.");
+      return absl::UnimplementedError(absl::StrCat(
+          "Input with kind ", serialized_input.kind_case(), " not supported."));
   }
-  return OkStatus();
+  return absl::OkStatus();
 }
 
-Status PerformOneShotTensorComputation(
+absl::Status PerformOneShotTensorComputation(
     const RunOptions& run_options, const Input& input,
-    const string& input_tensor_name,
-    const std::vector<string>& output_tensor_names, Session* session,
+    const std::string& input_tensor_name,
+    const std::vector<std::string>& output_tensor_names, Session* session,
     std::vector<Tensor>* outputs, int* num_input_examples,
     const thread::ThreadPoolOptions& thread_pool_options,
     int64_t* runtime_latency) {
@@ -222,13 +232,13 @@ Status PerformOneShotTensorComputation(
   if (runtime_latency != nullptr) {
     *runtime_latency = end_microseconds - start_microseconds;
   }
-  return OkStatus();
+  return absl::OkStatus();
 }
 
-Status PerformOneShotTensorComputation(
+absl::Status PerformOneShotTensorComputation(
     const RunOptions& run_options, const Input& input,
-    const std::set<string>& input_tensor_names,
-    const std::vector<string>& output_tensor_names, Session* session,
+    const std::set<std::string>& input_tensor_names,
+    const std::vector<std::string>& output_tensor_names, Session* session,
     std::vector<Tensor>* outputs, int* num_input_examples,
     const thread::ThreadPoolOptions& thread_pool_options) {
   // Setup the input Tensor to be a vector of string containing the serialized
@@ -237,7 +247,7 @@ Status PerformOneShotTensorComputation(
   TF_RETURN_IF_ERROR(InputToSerializedExampleTensor(input, &input_tensor));
   *num_input_examples = input_tensor.dim_size(0);
 
-  std::vector<std::pair<string, Tensor>> inputs;
+  std::vector<std::pair<std::string, Tensor>> inputs;
   inputs.reserve(input_tensor_names.size());
   for (const auto& name : input_tensor_names) {
     inputs.emplace_back(name, input_tensor);
@@ -248,8 +258,8 @@ Status PerformOneShotTensorComputation(
                       &run_metadata, thread_pool_options);
 }
 
-void MakeModelSpec(const string& model_name,
-                   const absl::optional<string>& signature_name,
+void MakeModelSpec(const std::string& model_name,
+                   const absl::optional<std::string>& signature_name,
                    const absl::optional<int64_t>& version,
                    ModelSpec* model_spec) {
   model_spec->Clear();
@@ -264,35 +274,35 @@ void MakeModelSpec(const string& model_name,
   }
 }
 
-Status GetModelDiskSize(const string& path, FileProbingEnv* env,
-                        uint64_t* total_file_size) {
+absl::Status GetModelDiskSize(const std::string& path, FileProbingEnv* env,
+                              uint64_t* total_file_size) {
   if (env == nullptr) {
-    return errors::Internal("FileProbingEnv not set");
+    return absl::InternalError("FileProbingEnv not set");
   }
   // Make sure that path exists.
   TF_RETURN_IF_ERROR(env->FileExists(path));
 
   *total_file_size = 0;
-  std::deque<string> dir_q;  // Queue for the BFS
+  std::deque<std::string> dir_q;  // Queue for the BFS
 
   dir_q.push_back(path);
   // Do a BFS on the directory to discover all immediate children.
   while (!dir_q.empty()) {
-    const string dir = dir_q.front();
+    const std::string dir = dir_q.front();
     dir_q.pop_front();
-    std::vector<string> children;
+    std::vector<std::string> children;
     // GetChildren might fail if we don't have appropriate permissions.
     TF_RETURN_IF_ERROR(env->GetChildren(dir, &children));
     // Multi-threaded writes are safe for int but not bool, so we use int below.
     std::vector<int> child_is_dir(children.size());
-    std::vector<StatusOr<uint64_t>> children_sizes(children.size());
+    std::vector<absl::StatusOr<uint64_t>> children_sizes(children.size());
 
     {
       // Filesystem operations may block for a long time so this process is
       // vastly accelerated by parallelizing the iteration over children.
       ThreadPoolExecutor executor(Env::Default(), "ModelDiskSizePool", 256);
       for (int i = 0; i < children.size(); i++) {
-        const string child_path = io::JoinPath(dir, children[i]);
+        const std::string child_path = io::JoinPath(dir, children[i]);
         children[i] = child_path;
         executor.Schedule(
             [i, child_path, env, &child_is_dir, &children_sizes]() {
@@ -302,9 +312,9 @@ Status GetModelDiskSize(const string& path, FileProbingEnv* env,
               } else {
                 // Otherwise, add its file size to total_file_size.
                 uint64_t file_size;
-                Status status = env->GetFileSize(child_path, &file_size);
+                absl::Status status = env->GetFileSize(child_path, &file_size);
                 children_sizes[i] =
-                    status.ok() ? StatusOr<uint64_t>(file_size) : status;
+                    status.ok() ? absl::StatusOr<uint64_t>(file_size) : status;
               }
             });
       }
@@ -318,12 +328,12 @@ Status GetModelDiskSize(const string& path, FileProbingEnv* env,
       }
     }
   }
-  return OkStatus();
+  return absl::OkStatus();
 }
 
-Status EstimateResourceFromPathUsingDiskState(const string& path,
-                                              FileProbingEnv* env,
-                                              ResourceAllocation* estimate) {
+absl::Status EstimateResourceFromPathUsingDiskState(
+    const std::string& path, FileProbingEnv* env,
+    ResourceAllocation* estimate) {
   uint64_t total_file_size = 0;
   TF_RETURN_IF_ERROR(GetModelDiskSize(path, env, &total_file_size));
 
@@ -337,24 +347,30 @@ Status EstimateResourceFromPathUsingDiskState(const string& path,
   ram_resource->set_kind(resource_kinds::kRamBytes);
   ram_entry->set_quantity(ram_requirement);
 
-  return OkStatus();
+  return absl::OkStatus();
 }
 
-void RecordRuntimeLatency(const string& model_name, const string& api,
-                          const string& runtime, int64_t latency_usec) {
+void RecordRuntimeLatency(const std::string& model_name, const std::string& api,
+                          const std::string& runtime, int64_t latency_usec) {
   runtime_latency->GetCell(model_name, api, runtime)->Add(latency_usec);
 }
 
-void RecordRequestLatency(const string& model_name, const string& api,
-                          const string& entrypoint, int64_t latency_usec) {
+void RecordRequestLatency(const std::string& model_name, const std::string& api,
+                          const std::string& entrypoint, int64_t latency_usec) {
   request_latency->GetCell(model_name, api, entrypoint)->Add(latency_usec);
 }
 
-std::set<string> SetDifference(std::set<string> set_a, std::set<string> set_b) {
-  std::set<string> result;
+std::set<std::string> SetDifference(std::set<std::string> set_a,
+                                    std::set<std::string> set_b) {
+  std::set<std::string> result;
   std::set_difference(set_a.begin(), set_a.end(), set_b.begin(), set_b.end(),
                       std::inserter(result, result.end()));
   return result;
+}
+
+bool IsTfrtErrorLoggingEnabled() {
+  const char* env = getenv("ENABLE_TFRT_SERVING_ERROR_LOGGING");
+  return env != nullptr && env[0] == '1' && env[1] == '\0';
 }
 
 }  // namespace serving

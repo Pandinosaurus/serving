@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "tensorflow_serving/servables/tensorflow/multi_inference.h"
 
+#include <set>
+#include <vector>
+
 #include "tensorflow/cc/saved_model/signature_constants.h"
 #include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/core/platform/tracing.h"
@@ -27,45 +30,46 @@ limitations under the License.
 namespace tensorflow {
 namespace serving {
 
-Status TensorFlowMultiInferenceRunner::Infer(
+absl::Status TensorFlowMultiInferenceRunner::Infer(
     const RunOptions& run_options, const MultiInferenceRequest& request,
     MultiInferenceResponse* response) {
   TRACELITERAL("TensorFlowMultiInferenceRunner::Infer");
 
-  string model_name = "";
-  std::set<string> signature_names;
-  std::set<string> input_tensor_name_set;
-  std::set<string> output_tensor_name_set;
+  std::string model_name = "";
+  std::set<std::string> signature_names;
+  std::set<std::string> input_tensor_name_set;
+  std::set<std::string> output_tensor_name_set;
   for (const auto& task : request.tasks()) {
     if (task.model_spec().name().empty()) {
-      return errors::InvalidArgument(
+      return absl::InvalidArgumentError(
           "Found ModelSpec with an empty model name.");
     }
     if (model_name.empty()) {
       model_name = task.model_spec().name();
     } else if (model_name != task.model_spec().name()) {
-      return errors::InvalidArgument(
+      return absl::InvalidArgumentError(
           "All ModelSpecs in a MultiInferenceRequest must access the same "
           "model name.");
     }
 
-    const string signature_name = task.model_spec().signature_name().empty()
-                                      ? kDefaultServingSignatureDefKey
-                                      : task.model_spec().signature_name();
+    const std::string signature_name =
+        task.model_spec().signature_name().empty()
+            ? kDefaultServingSignatureDefKey
+            : task.model_spec().signature_name();
 
     if (signature_names.find(signature_name) != signature_names.end()) {
-      return errors::InvalidArgument(strings::StrCat(
-          "Duplicate evaluation of signature: ", signature_name));
+      return absl::InvalidArgumentError(
+          absl::StrCat("Duplicate evaluation of signature: ", signature_name));
     }
     signature_names.insert(signature_name);
 
     auto iter = meta_graph_def_->signature_def().find(signature_name);
     if (iter == meta_graph_def_->signature_def().end()) {
-      return errors::InvalidArgument(strings::StrCat(
+      return absl::InvalidArgumentError(absl::StrCat(
           "Requested signature not found in model graph: ", signature_name));
     }
-    string input_name;
-    std::vector<string> output_names;
+    std::string input_name;
+    std::vector<std::string> output_names;
 
     if (task.method_name() == kClassifyMethodName) {
       TF_RETURN_IF_ERROR(
@@ -74,8 +78,8 @@ Status TensorFlowMultiInferenceRunner::Infer(
       TF_RETURN_IF_ERROR(
           PreProcessRegression(iter->second, &input_name, &output_names));
     } else {
-      return errors::Unimplemented("Unsupported signature method_name: ",
-                                   task.method_name());
+      return absl::UnimplementedError(absl::StrCat(
+          "Unsupported signature method_name: ", task.method_name()));
     }
     input_tensor_name_set.insert(input_name);
     for (const auto& output_tensor_name : output_names) {
@@ -83,8 +87,8 @@ Status TensorFlowMultiInferenceRunner::Infer(
     }
   }
 
-  const std::vector<string> output_tensor_names(output_tensor_name_set.begin(),
-                                                output_tensor_name_set.end());
+  const std::vector<std::string> output_tensor_names(
+      output_tensor_name_set.begin(), output_tensor_name_set.end());
 
   std::vector<Tensor> outputs;
   int num_examples;
@@ -95,12 +99,13 @@ Status TensorFlowMultiInferenceRunner::Infer(
 
   TRACELITERAL("PostProcessResults");
   for (const auto& task : request.tasks()) {
-    const string signature_name = task.model_spec().signature_name().empty()
-                                      ? kDefaultServingSignatureDefKey
-                                      : task.model_spec().signature_name();
+    const std::string signature_name =
+        task.model_spec().signature_name().empty()
+            ? kDefaultServingSignatureDefKey
+            : task.model_spec().signature_name();
     auto iter = meta_graph_def_->signature_def().find(signature_name);
     if (iter == meta_graph_def_->signature_def().end()) {
-      return errors::InvalidArgument(strings::StrCat(
+      return absl::InvalidArgumentError(absl::StrCat(
           "Requested signature not found in model graph: ", signature_name));
     }
     if (task.method_name() == kClassifyMethodName) {
@@ -112,18 +117,18 @@ Status TensorFlowMultiInferenceRunner::Infer(
           iter->second, num_examples, output_tensor_names, outputs,
           response->add_results()->mutable_regression_result()));
     } else {
-      return errors::InvalidArgument("Unrecognized signature method_name: ",
-                                     task.method_name());
+      return absl::InvalidArgumentError(absl::StrCat(
+          "Unrecognized signature method_name: ", task.method_name()));
     }
     MakeModelSpec(task.model_spec().name(), task.model_spec().signature_name(),
                   servable_version_,
                   response->mutable_results(response->results_size() - 1)
                       ->mutable_model_spec());
   }
-  return OkStatus();
+  return absl::OkStatus();
 }
 
-Status RunMultiInference(
+absl::Status RunMultiInference(
     const RunOptions& run_options, const MetaGraphDef& meta_graph_def,
     const absl::optional<int64_t>& servable_version, Session* session,
     const MultiInferenceRequest& request, MultiInferenceResponse* response,

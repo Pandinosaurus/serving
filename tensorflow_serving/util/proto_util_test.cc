@@ -14,7 +14,10 @@ limitations under the License.
 ==============================================================================*/
 #include "tensorflow_serving/util/proto_util.h"
 
+#include <memory>
+
 #include <gtest/gtest.h>
+#include "absl/status/status.h"
 #include "tensorflow/core/lib/core/status_test_util.h"
 #include "tensorflow/core/lib/io/path.h"
 #include "tensorflow/core/platform/test.h"
@@ -27,20 +30,20 @@ namespace {
 TEST(ProtoUtilTest, ParseProtoTextFile_Errors) {
   StatusProto status_proto;
   auto status = ParseProtoTextFile<StatusProto>("missing.txt", &status_proto);
-  ASSERT_TRUE(errors::IsNotFound(status));
+  ASSERT_TRUE(absl::IsNotFound(status));
 
-  const string kProtoFile = io::JoinPath(testing::TmpDir(), "corrupt.txt");
+  const std::string kProtoFile = io::JoinPath(testing::TmpDir(), "corrupt.txt");
   std::unique_ptr<WritableFile> file;
   TF_ASSERT_OK(Env::Default()->NewWritableFile(kProtoFile, &file));
   TF_ASSERT_OK(file->Append("corrupt proto content"));
   TF_ASSERT_OK(file->Close());
   status = ParseProtoTextFile<StatusProto>(kProtoFile, &status_proto);
-  ASSERT_TRUE(errors::IsInvalidArgument(status));
+  ASSERT_TRUE(absl::IsInvalidArgument(status));
 }
 
 TEST(ProtoUtilTest, ParseProtoTextFile_EmptyFile_Success) {
   StatusProto status_proto;
-  const string kProtoFile = io::JoinPath(testing::TmpDir(), "proto1.txt");
+  const std::string kProtoFile = io::JoinPath(testing::TmpDir(), "proto1.txt");
   std::unique_ptr<WritableFile> file;
   TF_ASSERT_OK(Env::Default()->NewWritableFile(kProtoFile, &file));
   TF_ASSERT_OK(file->Append(" "));
@@ -51,7 +54,7 @@ TEST(ProtoUtilTest, ParseProtoTextFile_EmptyFile_Success) {
 
 TEST(ProtoUtilTest, ParseProtoTextFile_Success) {
   StatusProto status_proto;
-  const string kProtoFile = io::JoinPath(testing::TmpDir(), "proto2.txt");
+  const std::string kProtoFile = io::JoinPath(testing::TmpDir(), "proto2.txt");
   std::unique_ptr<WritableFile> file;
   TF_ASSERT_OK(Env::Default()->NewWritableFile(kProtoFile, &file));
   TF_ASSERT_OK(file->Append("error_message: 'hello'"));

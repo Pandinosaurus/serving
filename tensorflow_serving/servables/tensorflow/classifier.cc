@@ -21,6 +21,7 @@ limitations under the License.
 #include <functional>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "tensorflow/cc/saved_model/signature_constants.h"
@@ -58,12 +59,12 @@ class SavedModelTensorFlowClassifier : public ClassifierInterface {
 
   ~SavedModelTensorFlowClassifier() override = default;
 
-  Status Classify(const ClassificationRequest& request,
-                  ClassificationResult* result) override {
+  absl::Status Classify(const ClassificationRequest& request,
+                        ClassificationResult* result) override {
     TRACELITERAL("TensorFlowClassifier::Classify");
 
-    string input_tensor_name;
-    std::vector<string> output_tensor_names;
+    std::string input_tensor_name;
+    std::vector<std::string> output_tensor_names;
     TF_RETURN_IF_ERROR(PreProcessClassification(*signature_, &input_tensor_name,
                                                 &output_tensor_names));
 
@@ -99,8 +100,8 @@ class SavedModelClassifier : public ClassifierInterface {
 
   ~SavedModelClassifier() override = default;
 
-  Status Classify(const ClassificationRequest& request,
-                  ClassificationResult* result) override {
+  absl::Status Classify(const ClassificationRequest& request,
+                        ClassificationResult* result) override {
     // Get the default signature of the graph.  Expected to be a
     // classification signature.
     // TODO(b/26220896): Move TensorFlowClassifier creation to construction
@@ -122,14 +123,14 @@ class SavedModelClassifier : public ClassifierInterface {
 
 }  // namespace
 
-Status CreateClassifierFromSavedModelBundle(
+absl::Status CreateClassifierFromSavedModelBundle(
     const RunOptions& run_options, std::unique_ptr<SavedModelBundle> bundle,
     std::unique_ptr<ClassifierInterface>* service) {
   service->reset(new SavedModelClassifier(run_options, std::move(bundle)));
-  return OkStatus();
+  return absl::OkStatus();
 }
 
-Status CreateFlyweightTensorFlowClassifier(
+absl::Status CreateFlyweightTensorFlowClassifier(
     const RunOptions& run_options, Session* session,
     const SignatureDef* signature,
     std::unique_ptr<ClassifierInterface>* service) {
@@ -137,30 +138,30 @@ Status CreateFlyweightTensorFlowClassifier(
       run_options, session, signature, thread::ThreadPoolOptions(), service);
 }
 
-Status CreateFlyweightTensorFlowClassifier(
+absl::Status CreateFlyweightTensorFlowClassifier(
     const RunOptions& run_options, Session* session,
     const SignatureDef* signature,
     const thread::ThreadPoolOptions& thread_pool_options,
     std::unique_ptr<ClassifierInterface>* service) {
   service->reset(new SavedModelTensorFlowClassifier(
       run_options, session, signature, thread_pool_options));
-  return OkStatus();
+  return absl::OkStatus();
 }
 
-Status GetClassificationSignatureDef(const ModelSpec& model_spec,
-                                     const MetaGraphDef& meta_graph_def,
-                                     SignatureDef* signature) {
-  const string signature_name = model_spec.signature_name().empty()
-                                    ? kDefaultServingSignatureDefKey
-                                    : model_spec.signature_name();
+absl::Status GetClassificationSignatureDef(const ModelSpec& model_spec,
+                                           const MetaGraphDef& meta_graph_def,
+                                           SignatureDef* signature) {
+  const std::string signature_name = model_spec.signature_name().empty()
+                                         ? kDefaultServingSignatureDefKey
+                                         : model_spec.signature_name();
   auto iter = meta_graph_def.signature_def().find(signature_name);
   if (iter == meta_graph_def.signature_def().end()) {
-    return errors::InvalidArgument(strings::StrCat(
-        "No signature was found with the name: ", signature_name));
+    return absl::InvalidArgumentError(
+        absl::StrCat("No signature was found with the name: ", signature_name));
   }
   if (GetSignatureMethodNameCheckFeature()) {
     if (iter->second.method_name() != kClassifyMethodName) {
-      return errors::InvalidArgument(strings::StrCat(
+      return absl::InvalidArgumentError(absl::StrCat(
           "Expected classification signature method_name to be ",
           kClassifyMethodName, ". Was: ", iter->second.method_name()));
     }
@@ -169,33 +170,32 @@ Status GetClassificationSignatureDef(const ModelSpec& model_spec,
         PreProcessClassification(iter->second, nullptr, nullptr));
   }
   *signature = iter->second;
-  return OkStatus();
+  return absl::OkStatus();
 }
 
-Status PreProcessClassification(const SignatureDef& signature,
-                                string* input_tensor_name,
-                                std::vector<string>* output_tensor_names) {
+absl::Status PreProcessClassification(
+    const SignatureDef& signature, std::string* input_tensor_name,
+    std::vector<std::string>* output_tensor_names) {
   if (GetSignatureMethodNameCheckFeature() &&
       signature.method_name() != kClassifyMethodName) {
-    return errors::InvalidArgument(strings::StrCat(
-        "Expected classification signature method_name to be ",
-        kClassifyMethodName, ". Was: ", signature.method_name()));
+    return absl::InvalidArgumentError(
+        absl::StrCat("Expected classification signature method_name to be ",
+                     kClassifyMethodName, ". Was: ", signature.method_name()));
   }
   if (signature.inputs().size() != 1) {
-    return errors::InvalidArgument(
-        strings::StrCat("Expected one input Tensor."));
+    return absl::InvalidArgumentError("Expected one input Tensor.");
   }
   if (signature.outputs().size() != 1 && signature.outputs().size() != 2) {
-    return errors::InvalidArgument(
-        strings::StrCat("Expected one or two output Tensors, found ",
-                        signature.outputs().size()));
+    return absl::InvalidArgumentError(
+        absl::StrCat("Expected one or two output Tensors, found ",
+                     signature.outputs().size()));
   }
 
   auto input_iter = signature.inputs().find(kClassifyInputs);
   if (input_iter == signature.inputs().end()) {
-    return errors::InvalidArgument(
-        "No classification inputs found in SignatureDef: ",
-        signature.DebugString());
+    return absl::InvalidArgumentError(
+        absl::StrCat("No classification inputs found in SignatureDef: ",
+                     signature.DebugString()));
   }
   if (input_tensor_name != nullptr) {
     *input_tensor_name = input_iter->second.name();
@@ -205,7 +205,7 @@ Status PreProcessClassification(const SignatureDef& signature,
   auto scores_iter = signature.outputs().find(kClassifyOutputScores);
   if (classes_iter == signature.outputs().end() &&
       scores_iter == signature.outputs().end()) {
-    return errors::InvalidArgument(strings::StrCat(
+    return absl::InvalidArgumentError(strings::StrCat(
         "Expected classification signature outputs to contain at least one of ",
         "\"", kClassifyOutputClasses, "\" or \"", kClassifyOutputScores,
         "\". Signature was: ", signature.DebugString()));
@@ -218,26 +218,26 @@ Status PreProcessClassification(const SignatureDef& signature,
       output_tensor_names->push_back(scores_iter->second.name());
     }
   }
-  return OkStatus();
+  return absl::OkStatus();
 }
 
-Status PostProcessClassificationResult(
+absl::Status PostProcessClassificationResult(
     const SignatureDef& signature, int num_examples,
-    const std::vector<string>& output_tensor_names,
+    const std::vector<std::string>& output_tensor_names,
     const std::vector<Tensor>& output_tensors, ClassificationResult* result) {
   if (output_tensors.size() != output_tensor_names.size()) {
-    return errors::InvalidArgument(
-        strings::StrCat("Expected ", output_tensor_names.size(),
-                        " output tensor(s).  Got: ", output_tensors.size()));
+    return absl::InvalidArgumentError(
+        absl::StrCat("Expected ", output_tensor_names.size(),
+                     " output tensor(s).  Got: ", output_tensors.size()));
   }
 
   auto classes_iter = signature.outputs().find(kClassifyOutputClasses);
-  string classes_tensor_name;
+  std::string classes_tensor_name;
   if (classes_iter != signature.outputs().end()) {
     classes_tensor_name = classes_iter->second.name();
   }
   auto scores_iter = signature.outputs().find(kClassifyOutputScores);
-  string scores_tensor_name;
+  std::string scores_tensor_name;
   if (scores_iter != signature.outputs().end()) {
     scores_tensor_name = scores_iter->second.name();
   }
@@ -255,37 +255,37 @@ Status PostProcessClassificationResult(
   // Validate classes output Tensor.
   if (classes) {
     if (classes->dims() != 2) {
-      return errors::InvalidArgument(
+      return absl::InvalidArgumentError(absl::StrCat(
           "Expected Tensor shape: [batch_size num_classes] but got ",
-          classes->shape().DebugString());
+          classes->shape().DebugString()));
     }
     if (classes->dtype() != DT_STRING) {
-      return errors::InvalidArgument(
-          "Expected classes Tensor of DT_STRING. Got: ",
-          DataType_Name(classes->dtype()));
+      return absl::InvalidArgumentError(
+          absl::StrCat("Expected classes Tensor of DT_STRING. Got: ",
+                       DataType_Name(classes->dtype())));
     }
     if (classes->dim_size(0) != num_examples) {
-      return errors::InvalidArgument("Expected classes output batch size of ",
-                                     num_examples,
-                                     ". Got: ", classes->dim_size(0));
+      return absl::InvalidArgumentError(
+          absl::StrCat("Expected classes output batch size of ", num_examples,
+                       ". Got: ", classes->dim_size(0)));
     }
   }
   // Validate scores output Tensor.
   if (scores) {
     if (scores->dims() != 2) {
-      return errors::InvalidArgument(
+      return absl::InvalidArgumentError(absl::StrCat(
           "Expected Tensor shape: [batch_size num_classes] but got ",
-          scores->shape().DebugString());
+          scores->shape().DebugString()));
     }
     if (scores->dtype() != DT_FLOAT) {
-      return errors::InvalidArgument(
-          "Expected scores Tensor of DT_FLOAT. Got: ",
-          DataType_Name(scores->dtype()));
+      return absl::InvalidArgumentError(
+          absl::StrCat("Expected scores Tensor of DT_FLOAT. Got: ",
+                       DataType_Name(scores->dtype())));
     }
     if (scores->dim_size(0) != num_examples) {
-      return errors::InvalidArgument("Expected scores output batch size of ",
-                                     num_examples,
-                                     ". Got: ", scores->dim_size(0));
+      return absl::InvalidArgumentError(
+          absl::StrCat("Expected scores output batch size of ", num_examples,
+                       ". Got: ", scores->dim_size(0)));
     }
   }
   // Extract the number of classes from either the class or score output
@@ -294,9 +294,9 @@ Status PostProcessClassificationResult(
   if (classes && scores) {
     // If we have both Tensors they should agree in the second dimmension.
     if (classes->dim_size(1) != scores->dim_size(1)) {
-      return errors::InvalidArgument(
+      return absl::InvalidArgumentError(absl::StrCat(
           "Tensors class and score should match in dim_size(1). Got ",
-          classes->dim_size(1), " vs. ", scores->dim_size(1));
+          classes->dim_size(1), " vs. ", scores->dim_size(1)));
     }
     num_classes = classes->dim_size(1);
   } else if (classes) {
@@ -319,15 +319,15 @@ Status PostProcessClassificationResult(
       }
     }
   }
-  return OkStatus();
+  return absl::OkStatus();
 }
 
-Status RunClassify(const RunOptions& run_options,
-                   const MetaGraphDef& meta_graph_def,
-                   const absl::optional<int64_t>& servable_version,
-                   Session* session, const ClassificationRequest& request,
-                   ClassificationResponse* response,
-                   const thread::ThreadPoolOptions& thread_pool_options) {
+absl::Status RunClassify(const RunOptions& run_options,
+                         const MetaGraphDef& meta_graph_def,
+                         const absl::optional<int64_t>& servable_version,
+                         Session* session, const ClassificationRequest& request,
+                         ClassificationResponse* response,
+                         const thread::ThreadPoolOptions& thread_pool_options) {
   SignatureDef signature;
   TF_RETURN_IF_ERROR(GetClassificationSignatureDef(request.model_spec(),
                                                    meta_graph_def, &signature));

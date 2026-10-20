@@ -15,6 +15,12 @@ limitations under the License.
 
 #include "tensorflow_serving/core/servable_state_monitor.h"
 
+#include <map>
+#include <utility>
+#include <vector>
+
+#include "absl/synchronization/notification.h"
+#include "absl/time/time.h"
 #include "tensorflow/core/lib/core/notification.h"
 #include "tensorflow/core/lib/gtl/cleanup.h"
 #include "tensorflow_serving/core/servable_state.h"
@@ -26,7 +32,7 @@ namespace {
 void EraseLiveStatesEntry(
     const ServableStateMonitor::ServableStateAndTime& state_and_time,
     ServableStateMonitor::ServableMap* const live_states) {
-  const string& servable_name = state_and_time.state.id.name;
+  const std::string& servable_name = state_and_time.state.id.name;
   const int64_t version = state_and_time.state.id.version;
   auto servable_map_it = live_states->find(servable_name);
   if (servable_map_it == live_states->end()) {
@@ -47,7 +53,7 @@ void EraseLiveStatesEntry(
 void UpdateLiveStates(
     const ServableStateMonitor::ServableStateAndTime& state_and_time,
     ServableStateMonitor::ServableMap* const live_states) {
-  const string& servable_name = state_and_time.state.id.name;
+  const std::string& servable_name = state_and_time.state.id.name;
   const int64_t version = state_and_time.state.id.version;
   if (state_and_time.state.manager_state != ServableState::ManagerState::kEnd) {
     (*live_states)[servable_name][version] = state_and_time;
@@ -76,7 +82,8 @@ absl::optional<ServableState::ManagerState> HasSpecificServableReachedState(
 // Returns the id of the servable in the stream which has reached 'goal_state'
 // or kEnd. If no servable has done so, returns nullopt.
 absl::optional<ServableId> HasAnyServableInStreamReachedState(
-    const string& stream_name, const ServableState::ManagerState goal_state,
+    const std::string& stream_name,
+    const ServableState::ManagerState goal_state,
     const ServableStateMonitor::ServableMap& states) {
   absl::optional<ServableId> opt_servable_id;
   const auto found_it = states.find(stream_name);
@@ -98,9 +105,9 @@ absl::optional<ServableId> HasAnyServableInStreamReachedState(
 
 }  // namespace
 
-string ServableStateMonitor::ServableStateAndTime::DebugString() const {
-  return strings::StrCat("state: {", state.DebugString(),
-                         "}, event_time_micros: ", event_time_micros);
+std::string ServableStateMonitor::ServableStateAndTime::DebugString() const {
+  return absl::StrCat("state: {", state.DebugString(),
+                      "}, event_time_micros: ", event_time_micros);
 }
 
 ServableStateMonitor::ServableStateMonitor(EventBus<ServableState>* bus,
@@ -126,12 +133,12 @@ ServableStateMonitor::GetStateAndTimeInternal(
     const ServableId& servable_id) const {
   auto it = states_.find(servable_id.name);
   if (it == states_.end()) {
-    return absl::nullopt;
+    return std::nullopt;
   }
   const VersionMap& versions = it->second;
   auto it2 = versions.find(servable_id.version);
   if (it2 == versions.end()) {
-    return absl::nullopt;
+    return std::nullopt;
   }
   return it2->second;
 }
@@ -147,13 +154,13 @@ absl::optional<ServableState> ServableStateMonitor::GetState(
   const absl::optional<ServableStateAndTime>& state_and_time =
       GetStateAndTime(servable_id);
   if (!state_and_time) {
-    return absl::nullopt;
+    return std::nullopt;
   }
   return state_and_time->state;
 }
 
 ServableStateMonitor::VersionMap ServableStateMonitor::GetVersionStates(
-    const string& servable_name) const {
+    const std::string& servable_name) const {
   mutex_lock l(mu_);
   auto it = states_.find(servable_name);
   if (it == states_.end()) {
@@ -197,7 +204,7 @@ ServableStateMonitor::GetAvailableServableStates() const {
   ServableSet available_servable_set;
   mutex_lock l(mu_);
   for (const auto& live_state : live_states_) {
-    const string& servable_name = live_state.first;
+    const std::string& servable_name = live_state.first;
     const auto& version_map = live_state.second;
     for (const auto& version : version_map) {
       const ServableStateAndTime state_and_time = version.second;
@@ -230,12 +237,12 @@ void ServableStateMonitor::Notify(const NotifyFn& notify_fn) {
   notify_fns_.push_back(notify_fn);
 }
 
-bool ServableStateMonitor::WaitUntilServablesReachState(
+bool ServableStateMonitor::WaitUntilServablesReachStateWithTimeout(
     const std::vector<ServableRequest>& servables,
-    const ServableState::ManagerState goal_state,
+    const ServableState::ManagerState goal_state, absl::Duration timeout,
     std::map<ServableId, ServableState::ManagerState>* const states_reached) {
-  bool reached_goal_state;
-  Notification notified;
+  bool reached_goal_state = false;
+  absl::Notification notified;
   NotifyWhenServablesReachState(
       servables, goal_state,
       [&](const bool incoming_reached_goal_state,
@@ -247,8 +254,17 @@ bool ServableStateMonitor::WaitUntilServablesReachState(
         reached_goal_state = incoming_reached_goal_state;
         notified.Notify();
       });
-  notified.WaitForNotification();
+  notified.WaitForNotificationWithTimeout(timeout);
   return reached_goal_state;
+}
+
+bool ServableStateMonitor::WaitUntilServablesReachState(
+    const std::vector<ServableRequest>& servables,
+    const ServableState::ManagerState goal_state,
+    std::map<ServableId, ServableState::ManagerState>* const states_reached) {
+  return WaitUntilServablesReachStateWithTimeout(
+      servables, goal_state,
+      /*timeout=*/absl::InfiniteDuration(), states_reached);
 }
 
 void ServableStateMonitor::PreHandleEvent(

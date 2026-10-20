@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "tensorflow_serving/core/resource_preserving_policy.h"
 
+#include <algorithm>
+#include <vector>
+
 namespace tensorflow {
 namespace serving {
 
@@ -41,7 +44,7 @@ ResourcePreservingPolicy::GetNextAction(
                            version.state != LoaderHarness::State::kError;
                   });
   if (not_aspired_not_finished) {
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   // Third and only if no action was found earlier, load the aspired new
@@ -54,7 +57,7 @@ ResourcePreservingPolicy::GetNextAction(
     return {{Action::kLoad, highest_aspired_new_version_id.value()}};
   }
 
-  return absl::nullopt;
+  return std::nullopt;
 }
 
 }  // namespace serving

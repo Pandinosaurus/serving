@@ -53,12 +53,12 @@ class GetModelMetadataImplTest : public ::testing::TestWithParam<bool> {
  public:
   static void SetUpTestSuite() {
     if (!IsTensorflowServingOSS()) {
-      const string session_bundle_path = test_util::TestSrcDirPath(
+      const std::string session_bundle_path = test_util::TestSrcDirPath(
           "/servables/tensorflow/google/testdata/half_plus_two");
       TF_ASSERT_OK(CreateServerCore(session_bundle_path, false, &server_core_));
     }
 
-    const string saved_model_path = test_util::TensorflowTestSrcDirPath(
+    const std::string saved_model_path = test_util::TensorflowTestSrcDirPath(
         "cc/saved_model/testdata/half_plus_two");
     TF_ASSERT_OK(
         CreateServerCore(saved_model_path, true, &saved_model_server_core_));
@@ -70,9 +70,9 @@ class GetModelMetadataImplTest : public ::testing::TestWithParam<bool> {
   }
 
  protected:
-  static Status CreateServerCore(const string& model_path,
-                                 bool saved_model_on_disk,
-                                 std::unique_ptr<ServerCore>* server_core) {
+  static absl::Status CreateServerCore(
+      const std::string& model_path, bool saved_model_on_disk,
+      std::unique_ptr<ServerCore>* server_core) {
     ModelServerConfig config;
     auto model_config = config.mutable_model_config_list()->add_config();
     model_config->set_name(kTestModelName);
@@ -125,14 +125,14 @@ TEST_P(GetModelMetadataImplTest, EmptyOrInvalidMetadataFieldList) {
   GetModelMetadataResponse response;
 
   // Empty metadata field list is invalid.
-  EXPECT_EQ(tensorflow::error::INVALID_ARGUMENT,
+  EXPECT_EQ(static_cast<absl::StatusCode>(absl::StatusCode::kInvalidArgument),
             GetModelMetadataImpl::GetModelMetadata(GetServerCore(), request,
                                                    &response)
                 .code());
   request.add_metadata_field("some_stuff");
 
   // Field enum is outside of valid range.
-  EXPECT_EQ(tensorflow::error::INVALID_ARGUMENT,
+  EXPECT_EQ(static_cast<absl::StatusCode>(absl::StatusCode::kInvalidArgument),
             GetModelMetadataImpl::GetModelMetadata(GetServerCore(), request,
                                                    &response)
                 .code());
@@ -143,7 +143,7 @@ TEST_P(GetModelMetadataImplTest, MissingOrEmptyModelSpec) {
   GetModelMetadataResponse response;
 
   request.add_metadata_field(GetModelMetadataImpl::kSignatureDef);
-  EXPECT_EQ(tensorflow::error::INVALID_ARGUMENT,
+  EXPECT_EQ(static_cast<absl::StatusCode>(absl::StatusCode::kInvalidArgument),
             GetModelMetadataImpl::GetModelMetadata(GetServerCore(), request,
                                                    &response)
                 .code());
@@ -152,7 +152,7 @@ TEST_P(GetModelMetadataImplTest, MissingOrEmptyModelSpec) {
   model_spec->clear_name();
 
   // Model name is not specified.
-  EXPECT_EQ(tensorflow::error::INVALID_ARGUMENT,
+  EXPECT_EQ(static_cast<absl::StatusCode>(absl::StatusCode::kInvalidArgument),
             GetModelMetadataImpl::GetModelMetadata(GetServerCore(), request,
                                                    &response)
                 .code());

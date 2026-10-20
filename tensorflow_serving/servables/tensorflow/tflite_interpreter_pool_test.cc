@@ -15,9 +15,13 @@ limitations under the License.
 #include "tensorflow_serving/servables/tensorflow/tflite_interpreter_pool.h"
 
 #include <memory>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/base/attributes.h"
 #include "tensorflow/core/example/example.pb.h"
 #include "tensorflow/core/example/feature.pb.h"
 #include "tensorflow/core/lib/core/status_test_util.h"
@@ -35,12 +39,12 @@ constexpr char kParseExampleModel[] =
     "/servables/tensorflow/testdata/parse_example_tflite/00000123/"
     "model.tflite";
 
-constexpr char kMobileNetModel[] =
+[[maybe_unused]] constexpr char kMobileNetModel[] =
     "/servables/tensorflow/testdata/mobilenet_v1_quant_tflite/00000123/"
     "model.tflite";
 
 TEST(TfLiteInterpreterPool, CreateTfLiteInterpreterPoolTest) {
-  string model_bytes;
+  std::string model_bytes;
   TF_ASSERT_OK(ReadFileToString(Env::Default(),
                                 test_util::TestSrcDirPath(kParseExampleModel),
                                 &model_bytes));
@@ -95,7 +99,7 @@ std::vector<std::string> ExtractVector(const TfLiteTensor* tflite_tensor) {
 }
 
 TEST(TfLiteInterpreterWrapper, TfLiteInterpreterWrapperTest) {
-  string model_bytes;
+  std::string model_bytes;
   TF_ASSERT_OK(ReadFileToString(Env::Default(),
                                 test_util::TestSrcDirPath(kParseExampleModel),
                                 &model_bytes));
@@ -145,7 +149,7 @@ TEST(TfLiteInterpreterWrapper, TfLiteInterpreterWrapperTest) {
   }
   data.push_back(&t);
   ASSERT_FALSE(interpreter_wrapper->SetStringData(
-                   data, tensor, -1, actual_batch_size) == OkStatus());
+                   data, tensor, -1, actual_batch_size) == absl::OkStatus());
   TF_ASSERT_OK(
       interpreter_wrapper->SetStringData(data, tensor, idx, actual_batch_size));
   auto wrapped = interpreter_wrapper->Get();
@@ -161,15 +165,16 @@ TEST(TfLiteInterpreterWrapper, TfLiteInterpreterWrapperTest) {
   auto* tflite_tensor = wrapped->tensor(indices[0]);
   ASSERT_EQ(tflite_tensor->type, kTfLiteFloat32);
   ASSERT_EQ(GetTensorSize(tflite_tensor), fixed_batch_size);
-  EXPECT_THAT(ArraySlice<float>(ExtractVector<float>(tflite_tensor).data(),
-                                actual_batch_size),
-              ::testing::ElementsAreArray(expected_floats));
+  EXPECT_THAT(
+      absl::Span<const float>(ExtractVector<float>(tflite_tensor).data(),
+                              actual_batch_size),
+      ::testing::ElementsAreArray(expected_floats));
   tflite_tensor = wrapped->tensor(indices[1]);
   ASSERT_EQ(tflite_tensor->type, kTfLiteString);
   ASSERT_EQ(GetTensorSize(tflite_tensor), fixed_batch_size);
   EXPECT_THAT(
-      ArraySlice<std::string>(ExtractVector<std::string>(tflite_tensor).data(),
-                              actual_batch_size),
+      absl::Span<const std::string>(
+          ExtractVector<std::string>(tflite_tensor).data(), actual_batch_size),
       ::testing::ElementsAreArray(expected_strs));
 }
 

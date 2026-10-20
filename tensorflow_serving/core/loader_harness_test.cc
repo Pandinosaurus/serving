@@ -16,14 +16,19 @@ limitations under the License.
 #include "tensorflow_serving/core/loader_harness.h"
 
 #include <memory>
+#include <utility>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/status/status.h"
+#include "absl/synchronization/notification.h"
 #include "tensorflow/core/lib/core/errors.h"
-#include "tensorflow/core/lib/core/notification.h"
 #include "tensorflow/core/lib/core/status_test_util.h"
 #include "tensorflow/core/platform/env.h"
 #include "tensorflow/core/protobuf/error_codes.pb.h"
+#include "tensorflow_serving/core/loader.h"
+#include "tensorflow_serving/core/servable_id.h"
+#include "tensorflow_serving/core/servable_model_type.h"
 #include "tensorflow_serving/core/test_util/mock_loader.h"
 #include "tensorflow_serving/test_util/test_util.h"
 #include "tensorflow_serving/util/any_ptr.h"
@@ -48,7 +53,8 @@ void QuiesceAndUnload(LoaderHarness* const harness) {
 
 // Makes it s.t. it's legal to destruct 'harness'.
 void EnableDestruction(LoaderHarness* const harness) {
-  harness->Error(errors::Unknown("Erroring servable on purpose for shutdown"));
+  harness->Error(
+      absl::UnknownError("Erroring servable on purpose for shutdown"));
 }
 
 TEST(LoaderHarnessTest, Init) {
@@ -67,8 +73,8 @@ TEST(LoaderHarnessTest, LoadRequested) {
   TF_ASSERT_OK(harness.LoadRequested());
   EXPECT_EQ(LoaderHarness::State::kLoadRequested, harness.state());
 
-  harness.Error(
-      errors::Unknown("Transitions harness to a legally destructible state."));
+  harness.Error(absl::UnknownError(
+      "Transitions harness to a legally destructible state."));
 }
 
 TEST(LoaderHarnessTest, Quiesce) {
@@ -76,7 +82,7 @@ TEST(LoaderHarnessTest, Quiesce) {
   const ServableId servable_id = {"test", 0};
   LoaderHarness harness(servable_id, std::unique_ptr<Loader>(loader));
   EXPECT_CALL(*loader, LoadWithMetadata(Loader::Metadata{servable_id}))
-      .WillOnce(Return(OkStatus()));
+      .WillOnce(Return(absl::OkStatus()));
   EXPECT_CALL(*loader, Unload()).WillOnce(Return());
 
   TF_ASSERT_OK(harness.LoadRequested());
@@ -101,7 +107,7 @@ TEST(LoaderHarnessTest, Load) {
   LoaderHarness harness(servable_id, std::unique_ptr<Loader>(loader));
 
   EXPECT_CALL(*loader, LoadWithMetadata(Loader::Metadata{servable_id}))
-      .WillOnce(Return(OkStatus()));
+      .WillOnce(Return(absl::OkStatus()));
   {
     std::unique_ptr<Thread> test_thread(
         Env::Default()->StartThread(ThreadOptions(), "test", [&harness]() {
@@ -123,7 +129,7 @@ TEST(LoaderHarnessTest, Unload) {
 
   LoaderHarness harness(servable_id, std::unique_ptr<Loader>(loader));
   EXPECT_CALL(*loader, LoadWithMetadata(Loader::Metadata{servable_id}))
-      .WillOnce(Return(OkStatus()));
+      .WillOnce(Return(absl::OkStatus()));
   TF_ASSERT_OK(harness.LoadRequested());
   TF_ASSERT_OK(harness.LoadApproved());
   TF_ASSERT_OK(harness.Load());
@@ -143,7 +149,7 @@ TEST(LoaderHarnessTest, UnloadRequested) {
   const ServableId servable_id = {"test", 0};
   LoaderHarness harness(servable_id, std::unique_ptr<Loader>(loader));
   EXPECT_CALL(*loader, LoadWithMetadata(Loader::Metadata{servable_id}))
-      .WillOnce(Return(OkStatus()));
+      .WillOnce(Return(absl::OkStatus()));
   TF_ASSERT_OK(harness.LoadRequested());
   TF_ASSERT_OK(harness.LoadApproved());
   TF_ASSERT_OK(harness.Load());
@@ -162,8 +168,8 @@ TEST(LoaderHarnessTest, LoadApproved) {
   TF_ASSERT_OK(harness.LoadApproved());
   EXPECT_EQ(LoaderHarness::State::kLoadApproved, harness.state());
 
-  harness.Error(
-      errors::Unknown("Transitions harness to a legally destructible state."));
+  harness.Error(absl::UnknownError(
+      "Transitions harness to a legally destructible state."));
 }
 
 TEST(LoaderHarnessTest, LoadError) {
@@ -172,14 +178,14 @@ TEST(LoaderHarnessTest, LoadError) {
   LoaderHarness harness(servable_id, std::unique_ptr<Loader>(loader));
 
   EXPECT_CALL(*loader, LoadWithMetadata(Loader::Metadata{servable_id}))
-      .WillOnce(Return(errors::Unknown("test load error")));
+      .WillOnce(Return(absl::UnknownError("test load error")));
   {
     std::unique_ptr<Thread> test_thread(
         Env::Default()->StartThread(ThreadOptions(), "test", [&harness]() {
           TF_ASSERT_OK(harness.LoadRequested());
           TF_ASSERT_OK(harness.LoadApproved());
-          Status status = harness.Load();
-          EXPECT_THAT(status.error_message(), HasSubstr("test load error"));
+          absl::Status status = harness.Load();
+          EXPECT_THAT(status.message(), HasSubstr("test load error"));
         }));
   }
   EXPECT_EQ(LoaderHarness::State::kError, harness.state());
@@ -188,7 +194,9 @@ TEST(LoaderHarnessTest, LoadError) {
 TEST(LoaderHarnessTest, ExternallySignalledError) {
   LoaderHarness harness(ServableId{"test", 0}, nullptr /* no loader */);
   EXPECT_EQ(LoaderHarness::State::kNew, harness.state());
-  const Status status = Status(error::UNKNOWN, "Some unknown error");
+  const absl::Status status =
+      absl::Status(static_cast<absl::StatusCode>(absl::StatusCode::kUnknown),
+                   "Some unknown error");
   harness.Error(status);
   EXPECT_EQ(LoaderHarness::State::kError, harness.state());
   EXPECT_EQ(status, harness.status());
@@ -196,15 +204,20 @@ TEST(LoaderHarnessTest, ExternallySignalledError) {
 
 TEST(LoaderHarnessTest, ExternallySignalledErrorWithCallback) {
   const ServableId id = {"test_servable", 42};
-  const Status error = Status(error::UNKNOWN, "Some unknown error");
-  Notification callback_called;
+  const absl::Status error =
+      absl::Status(static_cast<absl::StatusCode>(absl::StatusCode::kUnknown),
+                   "Some unknown error");
+  absl::Notification callback_called;
   LoaderHarness::Options options;
   options.error_callback = [&](const ServableId& callback_id,
-                               const Status& callback_error) {
+                               ServableModelType callback_model_type,
+                               const absl::Status& callback_error) {
     EXPECT_EQ(id, callback_id);
+    EXPECT_EQ(callback_model_type, ServableModelType::kUnspecified);
     EXPECT_EQ(callback_error, error);
     callback_called.Notify();
   };
+
   LoaderHarness harness(id, nullptr /* no loader */, options);
   harness.Error(error);
   callback_called.WaitForNotification();
@@ -233,10 +246,10 @@ TEST(LoaderHarnessTest, MultipleLoadRequestsOnlyFirstOneSucceeds) {
   LoaderHarness harness(ServableId{"test", 0}, std::unique_ptr<Loader>(loader));
 
   TF_ASSERT_OK(harness.LoadRequested());
-  const Status second_request_status = harness.LoadRequested();
+  const absl::Status second_request_status = harness.LoadRequested();
   EXPECT_FALSE(second_request_status.ok());
   EXPECT_EQ(error::FAILED_PRECONDITION, second_request_status.code());
-  EXPECT_THAT(second_request_status.error_message(),
+  EXPECT_THAT(second_request_status.message(),
               HasSubstr("Duplicate load request"));
 
   EnableDestruction(&harness);
@@ -249,16 +262,16 @@ TEST(LoaderHarnessTest, MultipleUnloadRequestsOnlyFirstOneSucceeds) {
 
   TF_ASSERT_OK(harness.LoadRequested());
   EXPECT_CALL(*loader, LoadWithMetadata(Loader::Metadata{servable_id}))
-      .WillOnce(Return(OkStatus()));
+      .WillOnce(Return(absl::OkStatus()));
   TF_ASSERT_OK(harness.LoadApproved());
   TF_ASSERT_OK(harness.Load());
 
   TF_ASSERT_OK(harness.UnloadRequested());
-  const Status second_status = harness.UnloadRequested();
+  const absl::Status second_status = harness.UnloadRequested();
   EXPECT_FALSE(second_status.ok());
   EXPECT_EQ(error::FAILED_PRECONDITION, second_status.code());
   EXPECT_THAT(
-      second_status.error_message(),
+      second_status.message(),
       HasSubstr("Servable not loaded, or unload already requested/ongoing"));
 
   EnableDestruction(&harness);
@@ -273,9 +286,8 @@ TEST(LoaderHarnessTest, RetryOnLoadErrorFinallySucceeds) {
   LoaderHarness harness(servable_id, std::unique_ptr<Loader>(loader), options);
 
   EXPECT_CALL(*loader, LoadWithMetadata(Loader::Metadata{servable_id}))
-      .WillOnce(InvokeWithoutArgs(
-          []() { return errors::Unknown("test load error"); }))
-      .WillOnce(InvokeWithoutArgs([]() { return OkStatus(); }));
+      .WillOnce([]() { return absl::UnknownError("test load error"); })
+      .WillOnce([]() { return absl::OkStatus(); });
   TF_ASSERT_OK(harness.LoadRequested());
   TF_ASSERT_OK(harness.LoadApproved());
   TF_ASSERT_OK(harness.Load());
@@ -293,12 +305,11 @@ TEST(LoaderHarnessTest, RetryOnLoadErrorFinallyFails) {
 
   EXPECT_CALL(*loader, LoadWithMetadata(Loader::Metadata{servable_id}))
       .Times(2)
-      .WillRepeatedly(InvokeWithoutArgs(
-          []() { return errors::Unknown("test load error"); }));
+      .WillRepeatedly([]() { return absl::UnknownError("test load error"); });
   TF_ASSERT_OK(harness.LoadRequested());
   TF_ASSERT_OK(harness.LoadApproved());
-  const Status status = harness.Load();
-  EXPECT_THAT(status.error_message(), HasSubstr("test load error"));
+  const absl::Status status = harness.Load();
+  EXPECT_THAT(status.message(), HasSubstr("test load error"));
 }
 
 // Tests cancelling load retries.
@@ -311,17 +322,16 @@ TEST(LoaderHarnessTest, RetryOnLoadErrorCancelledLoad) {
   LoaderHarness harness(servable_id, std::unique_ptr<Loader>(loader), options);
 
   EXPECT_CALL(*loader, LoadWithMetadata(Loader::Metadata{servable_id}))
-      .WillOnce(InvokeWithoutArgs(
-          []() { return errors::Unknown("test load error"); }))
+      .WillOnce([]() { return absl::UnknownError("test load error"); })
       // If the load is called again, we return OkStatus() to fail the test.
-      .WillRepeatedly(InvokeWithoutArgs([]() { return OkStatus(); }));
+      .WillRepeatedly([]() { return absl::OkStatus(); });
   std::unique_ptr<Thread> test_thread(
       Env::Default()->StartThread(ThreadOptions(), "test", [&harness]() {
         TF_ASSERT_OK(harness.LoadRequested());
         TF_ASSERT_OK(harness.LoadApproved());
-        harness.set_cancel_load_retry(true);
-        const Status status = harness.Load();
-        EXPECT_THAT(status.error_message(), HasSubstr("test load error"));
+        harness.set_should_retry([](absl::Status status) { return false; });
+        const absl::Status status = harness.Load();
+        EXPECT_THAT(status.message(), HasSubstr("test load error"));
       }));
 }
 
@@ -333,19 +343,60 @@ TEST(LoaderHarnessTest, UnloadDueToCancelledLoad) {
   LoaderHarness harness(servable_id, std::unique_ptr<Loader>(loader));
 
   EXPECT_CALL(*loader, LoadWithMetadata(Loader::Metadata{servable_id}))
-      .WillOnce(InvokeWithoutArgs([]() {
+      .WillOnce([]() {
         Env::Default()->SleepForMicroseconds(1000000);
-        return OkStatus();
-      }));
+        return absl::OkStatus();
+      });
 
   std::unique_ptr<Thread> test_thread(
       Env::Default()->StartThread(ThreadOptions(), "test", [&harness]() {
         TF_ASSERT_OK(harness.LoadRequested());
         TF_ASSERT_OK(harness.LoadApproved());
-        harness.set_cancel_load_retry(true);
-        const Status status = harness.Load();
-        EXPECT_THAT(status.error_message(), HasSubstr("cancelled"));
+        harness.set_should_retry([](absl::Status status) { return false; });
+        const absl::Status status = harness.Load();
+        EXPECT_THAT(status.message(), HasSubstr("cancelled"));
       }));
+}
+
+TEST(LoaderHarnessTest, UnloadDueToNonRetriableError) {
+  test_util::MockLoader* loader = new NiceMock<test_util::MockLoader>;
+
+  const ServableId servable_id = {"test", 0};
+  LoaderHarness harness(servable_id, std::unique_ptr<Loader>(loader));
+
+  EXPECT_CALL(*loader, LoadWithMetadata(Loader::Metadata{servable_id}))
+      .WillOnce(Return(absl::InvalidArgumentError("Non-retriable error.")))
+      .WillRepeatedly([]() {
+        Env::Default()->SleepForMicroseconds(1000000);
+        return absl::OkStatus();
+      });
+
+  std::unique_ptr<Thread> test_thread(
+      Env::Default()->StartThread(ThreadOptions(), "test", [&harness]() {
+        TF_ASSERT_OK(harness.LoadRequested());
+        TF_ASSERT_OK(harness.LoadApproved());
+        harness.set_should_retry([](absl::Status status) {
+          return !absl::IsInvalidArgument(status);
+        });
+        const absl::Status status = harness.Load();
+        EXPECT_THAT(status.message(), HasSubstr("Non-retriable error."));
+      }));
+}
+
+TEST(LoaderHarnessTest, ModelTypeWithoutServable) {
+  auto loader = std::make_unique<NiceMock<test_util::MockLoader>>();
+  LoaderHarness harness(ServableId{"test", 0}, std::move(loader));
+  EXPECT_EQ(harness.model_type(), ServableModelType::kUnspecified);
+}
+
+TEST(LoaderHarnessTest, ModelTypeWithServable) {
+  auto loader = std::make_unique<NiceMock<test_util::MockLoader>>();
+
+  EXPECT_CALL(*loader, model_type())
+      .WillRepeatedly(Return(ServableModelType::kTensorflow));
+  LoaderHarness harness(ServableId{"test", 0}, std::move(loader));
+
+  EXPECT_EQ(harness.model_type(), ServableModelType::kTensorflow);
 }
 
 }  // namespace

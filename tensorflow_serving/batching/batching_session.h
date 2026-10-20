@@ -26,6 +26,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/synchronization/notification.h"
 #include "absl/types/optional.h"
 #include "tensorflow/core/kernels/batching_util/basic_batch_scheduler.h"
 #include "tensorflow/core/kernels/batching_util/batch_scheduler.h"
@@ -123,7 +124,7 @@ using BatchingSessionOptions = BatchingOptions;
 //   return Status::OK();
 // };
 // std::unique_ptr<Session> batching_session;
-// TF_CHECK_OK(CreateBatchingSession(options, {{signature, scheduler_creator}},
+// CHECK_OK(CreateBatchingSession(options, {{signature, scheduler_creator}},
 //     std::move(session), &batching_session));
 //
 Status CreateBatchingSession(
@@ -180,7 +181,7 @@ struct BatchingSessionTask : public BatchTask {
 
   // Fields populated when a task is processed (as part of a batch), and
   // returned by BatchingSession when a task is complete.
-  Notification* done;
+  absl::Notification* done;
   Status* status;
   std::vector<Tensor>* outputs;
   RunMetadata* run_metadata;

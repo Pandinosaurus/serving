@@ -16,7 +16,10 @@ limitations under the License.
 #include "tensorflow_serving/model_servers/http_server.h"
 
 #include <cstdint>
+#include <functional>
 #include <memory>
+#include <utility>
+#include <vector>
 
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
@@ -40,48 +43,45 @@ namespace serving {
 
 namespace {
 
-net_http::HTTPStatusCode ToHTTPStatusCode(const Status& status) {
+net_http::HTTPStatusCode ToHTTPStatusCode(const absl::Status& status) {
   using error::Code;
   using net_http::HTTPStatusCode;
-  switch (status.code()) {
-    case Code::OK:
+  switch (static_cast<absl::StatusCode>(status.code())) {
+    case absl::StatusCode::kOk:
       return HTTPStatusCode::OK;
-    case Code::CANCELLED:
+    case absl::StatusCode::kCancelled:
       return HTTPStatusCode::CLIENT_CLOSED_REQUEST;
-    case Code::UNKNOWN:
+    case absl::StatusCode::kUnknown:
       return HTTPStatusCode::ERROR;
-    case Code::INVALID_ARGUMENT:
+    case absl::StatusCode::kInvalidArgument:
       return HTTPStatusCode::BAD_REQUEST;
-    case Code::DEADLINE_EXCEEDED:
+    case absl::StatusCode::kDeadlineExceeded:
       return HTTPStatusCode::GATEWAY_TO;
-    case Code::NOT_FOUND:
+    case absl::StatusCode::kNotFound:
       return HTTPStatusCode::NOT_FOUND;
-    case Code::ALREADY_EXISTS:
+    case absl::StatusCode::kAlreadyExists:
       return HTTPStatusCode::CONFLICT;
-    case Code::PERMISSION_DENIED:
+    case absl::StatusCode::kPermissionDenied:
       return HTTPStatusCode::FORBIDDEN;
-    case Code::RESOURCE_EXHAUSTED:
+    case absl::StatusCode::kResourceExhausted:
       return HTTPStatusCode::TOO_MANY_REQUESTS;
-    case Code::FAILED_PRECONDITION:
+    case absl::StatusCode::kFailedPrecondition:
       return HTTPStatusCode::BAD_REQUEST;
-    case Code::ABORTED:
+    case absl::StatusCode::kAborted:
       return HTTPStatusCode::CONFLICT;
-    case Code::OUT_OF_RANGE:
+    case absl::StatusCode::kOutOfRange:
       return HTTPStatusCode::BAD_REQUEST;
-    case Code::UNIMPLEMENTED:
+    case absl::StatusCode::kUnimplemented:
       return HTTPStatusCode::NOT_IMP;
-    case Code::INTERNAL:
+    case absl::StatusCode::kInternal:
       return HTTPStatusCode::ERROR;
-    case Code::UNAVAILABLE:
+    case absl::StatusCode::kUnavailable:
       return HTTPStatusCode::SERVICE_UNAV;
-    case Code::DATA_LOSS:
+    case absl::StatusCode::kDataLoss:
       return HTTPStatusCode::ERROR;
-    case Code::UNAUTHENTICATED:
+    case absl::StatusCode::kUnauthenticated:
       return HTTPStatusCode::UNAUTHORIZED;
-    case Code::
-        DO_NOT_USE_RESERVED_FOR_FUTURE_EXPANSION_USE_DEFAULT_IN_SWITCH_INSTEAD_:
-    case error::Code_INT_MIN_SENTINEL_DO_NOT_USE_:
-    case error::Code_INT_MAX_SENTINEL_DO_NOT_USE_:
+    default:
       return HTTPStatusCode::ERROR;
   }
 }
@@ -91,12 +91,14 @@ void ProcessPrometheusRequest(PrometheusExporter* exporter, const string& path,
   std::vector<std::pair<string, string>> headers;
   headers.push_back({"Content-Type", "text/plain"});
   string output;
-  Status status;
+  absl::Status status;
   // Check if url matches the path.
   if (req->uri_path() != path) {
     output = absl::StrFormat("Unexpected path: %s. Should be %s",
                              req->uri_path(), path);
-    status = Status(error::Code::INVALID_ARGUMENT, output);
+    status = absl::Status(
+        static_cast<absl::StatusCode>(absl::StatusCode::kInvalidArgument),
+        output);
   } else {
     status = exporter->GeneratePage(&output);
   }
@@ -128,10 +130,12 @@ class RequestExecutor final : public net_http::EventExecutor {
 class RestApiRequestDispatcher {
  public:
   RestApiRequestDispatcher(int timeout_in_ms, ServerCore* core)
-      : regex_(HttpRestApiHandler::kPathRegex),
-        core_(core),
-        handler_(tensorflow::serving::init::CreateHttpRestApiHandler(
-            timeout_in_ms, core)) {}
+      : regex_(HttpRestApiHandler::kPathRegex), core_(core) {
+    auto* tf_serving_registry = tensorflow::serving::init::
+        TensorflowServingFunctionRegistration::GetRegistry();
+    handler_ =
+        tf_serving_registry->GetCreateHttpRestApiHandler()(timeout_in_ms, core);
+  }
 
   net_http::RequestHandler Dispatch(net_http::ServerRequestInterface* req) {
     if (RE2::FullMatch(string(req->uri_path()), regex_)) {
@@ -162,11 +166,11 @@ class RestApiRequestDispatcher {
     VLOG(1) << "Processing HTTP request: " << req->http_method() << " "
             << req->uri_path() << " body: " << body.size() << " bytes.";
 
-    Status status;
+    absl::Status status;
     if (req->http_method() == "OPTIONS") {
       absl::string_view origin_header = req->GetRequestHeader("Origin");
       if (RE2::PartialMatch(origin_header, "https?://")) {
-        status = OkStatus();
+        status = absl::OkStatus();
       } else {
         status = errors::FailedPrecondition(
             "Origin header is missing in CORS preflight");

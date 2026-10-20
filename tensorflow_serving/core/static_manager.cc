@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "tensorflow_serving/core/static_manager.h"
 
+#include <memory>
+#include <utility>
+
 namespace tensorflow {
 namespace serving {
 
@@ -23,7 +26,7 @@ StaticManagerBuilder::StaticManagerBuilder() {
   // We don't want multithreading.
   basic_manager_options.num_load_threads = 0;
   basic_manager_options.num_unload_threads = 0;
-  const Status basic_manager_status =
+  const absl::Status basic_manager_status =
       BasicManager::Create(std::move(basic_manager_options), &basic_manager_);
   if (!basic_manager_status.ok()) {
     LOG(ERROR) << "Error creating BasicManager: " << health_;
@@ -38,7 +41,7 @@ std::unique_ptr<Manager> StaticManagerBuilder::Build() {
   }
 
   // If Build() is called again, we'll produce the following error.
-  health_ = errors::FailedPrecondition(
+  health_ = absl::FailedPreconditionError(
       "Build() already called on this StaticManagerBuilder.");
 
   return std::move(basic_manager_);

@@ -15,15 +15,22 @@ limitations under the License.
 
 #include "tensorflow_serving/servables/tensorflow/tflite_session.h"
 
+#include <map>
 #include <memory>
+#include <random>
+#include <set>
 #include <string>
 #include <utility>
+#include <vector>
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/base/attributes.h"
 #include "absl/flags/flag.h"
 #include "absl/functional/bind_front.h"
 #include "flatbuffers/flexbuffers.h"
 #include "tensorflow/cc/saved_model/signature_constants.h"
+#include "xla/tsl/platform/status.h"
 #include "tensorflow/core/example/example.pb.h"
 #include "tensorflow/core/example/feature.pb.h"
 #include "tensorflow/core/framework/attr_value.pb.h"
@@ -68,7 +75,7 @@ constexpr char kTestModelWithSigdef[] =
     "/servables/tensorflow/testdata/"
     "saved_model_half_plus_two_tflite_with_sigdef/00000123/model.tflite";
 
-constexpr char kMobileNetModel[] =
+[[maybe_unused]] constexpr char kMobileNetModel[] =
     "/servables/tensorflow/testdata/mobilenet_v1_quant_tflite/00000123/"
     "model.tflite";
 
@@ -77,12 +84,12 @@ constexpr char kParseExampleModel[] =
     "model.tflite";
 
 TEST(TfLiteSession, BasicTest) {
-  string model_bytes;
+  std::string model_bytes;
   TF_ASSERT_OK(ReadFileToString(tensorflow::Env::Default(),
                                 test_util::TestSrcDirPath(kTestModel),
                                 &model_bytes));
 
-  ::google::protobuf::Map<string, SignatureDef> signatures;
+  ::google::protobuf::Map<std::string, SignatureDef> signatures;
   std::unique_ptr<TfLiteSession> session;
   tensorflow::SessionOptions options;
   TF_ASSERT_OK(TfLiteSession::Create(
@@ -90,7 +97,7 @@ TEST(TfLiteSession, BasicTest) {
       absl::GetFlag(FLAGS_num_tflite_interpreters), &session, &signatures));
   EXPECT_EQ(signatures.size(), 1);
   EXPECT_EQ(signatures.begin()->first, "serving_default");
-  EXPECT_THAT(signatures.begin()->second, test_util::EqualsProto(R"(
+  EXPECT_THAT(signatures.begin()->second, test_util::EqualsProto(R"pb(
                 inputs {
                   key: "x"
                   value {
@@ -114,7 +121,7 @@ TEST(TfLiteSession, BasicTest) {
                   }
                 }
                 method_name: "tensorflow/serving/predict"
-              )"));
+              )pb"));
   Tensor input = test::AsTensor<float>({1.0, 2.0, 3.0}, TensorShape({3}));
   {
     // Use TF Lite tensor names.
@@ -135,12 +142,12 @@ TEST(TfLiteSession, BasicTest) {
 }
 
 TEST(TfLiteSession, ResizeWithSameNumElementsTest) {
-  string model_bytes;
+  std::string model_bytes;
   TF_ASSERT_OK(ReadFileToString(tensorflow::Env::Default(),
                                 test_util::TestSrcDirPath(kTestModel),
                                 &model_bytes));
 
-  ::google::protobuf::Map<string, SignatureDef> signatures;
+  ::google::protobuf::Map<std::string, SignatureDef> signatures;
   std::unique_ptr<TfLiteSession> session;
   tensorflow::SessionOptions options;
   TF_ASSERT_OK(TfLiteSession::Create(
@@ -188,12 +195,12 @@ TEST(TfLiteSession, ModelFromLegacyConverterWithSigdef) {
   // A model converted with TF v1 converter, having a signature def.
   // The signature def references an input tensor named "tflite_input:0", but
   // the converter striped the tensor name to "tflite_input".
-  string model_bytes;
+  std::string model_bytes;
   TF_ASSERT_OK(ReadFileToString(tensorflow::Env::Default(),
                                 test_util::TestSrcDirPath(kTestModelWithSigdef),
                                 &model_bytes));
 
-  ::google::protobuf::Map<string, SignatureDef> signatures;
+  ::google::protobuf::Map<std::string, SignatureDef> signatures;
   std::unique_ptr<TfLiteSession> session;
   tensorflow::SessionOptions options;
   TF_ASSERT_OK(TfLiteSession::Create(
@@ -203,7 +210,7 @@ TEST(TfLiteSession, ModelFromLegacyConverterWithSigdef) {
   EXPECT_EQ(signatures.begin()->first, "serving_default");
   // While, in the model, the tensor name of input "x" is "tflite_input:0". in
   // the output signature the name must have falled back to "tflite_input".
-  EXPECT_THAT(signatures.begin()->second, test_util::EqualsProto(R"(
+  EXPECT_THAT(signatures.begin()->second, test_util::EqualsProto(R"pb(
                 inputs {
                   key: "x"
                   value {
@@ -227,7 +234,7 @@ TEST(TfLiteSession, ModelFromLegacyConverterWithSigdef) {
                   }
                 }
                 method_name: "tensorflow/serving/predict"
-              )"));
+              )pb"));
 
   Tensor input = test::AsTensor<float>({1.0, 2.0, 3.0}, TensorShape({3}));
   {
@@ -259,7 +266,7 @@ constexpr char kSignatureOutput[] = "sigdef_output";
 
 constexpr int kBatchSize = 500;
 
-std::map<string, SignatureDef> GetTestSignatureDefMap() {
+std::map<std::string, SignatureDef> GetTestSignatureDefMap() {
   auto signature_def = SignatureDef();
   TensorInfo input_list_tensor;
   TensorInfo input_shape_tensor;
@@ -271,7 +278,7 @@ std::map<string, SignatureDef> GetTestSignatureDefMap() {
   (*signature_def.mutable_inputs())[kSignatureInputList] = input_list_tensor;
   (*signature_def.mutable_inputs())[kSignatureInputShape] = input_shape_tensor;
   (*signature_def.mutable_outputs())[kSignatureOutput] = output_tensor;
-  std::map<string, SignatureDef> signature_def_map = {
+  std::map<std::string, SignatureDef> signature_def_map = {
       {kDefaultServingSignatureDefKey, signature_def}};
   return signature_def_map;
 }
@@ -287,10 +294,10 @@ tensorflow::DataType ToTfTensorType(tflite::TensorType tflite_type) {
   }
 }
 
-string BuildTestModel(tflite::TensorType tensor_type,
-                      const string& input1_tensor_name,
-                      const string& input2_tensor_name, bool use_flex_op,
-                      std::map<string, SignatureDef>* signature_def_map) {
+std::string BuildTestModel(
+    tflite::TensorType tensor_type, const std::string& input1_tensor_name,
+    const std::string& input2_tensor_name, bool use_flex_op,
+    std::map<std::string, SignatureDef>* signature_def_map) {
   std::vector<int32_t> inputs;
   std::vector<int32_t> outputs;
   std::vector<flatbuffers::Offset<tflite::Tensor>> tensors;
@@ -328,7 +335,7 @@ string BuildTestModel(tflite::TensorType tensor_type,
           .Union();
   flatbuffers::Offset<flatbuffers::Vector<uint8_t>> custom_opts = 0;
   if (use_flex_op) {
-    string flexop = std::string(tflite::kFlexCustomCodePrefix) + "Reshape";
+    std::string flexop = std::string(tflite::kFlexCustomCodePrefix) + "Reshape";
     opcodes.push_back(CreateOperatorCodeDirect(
         builder, tflite::BuiltinOperator_CUSTOM, flexop.data()));
     builtin_opts_type = tflite::BuiltinOptions_NONE;
@@ -337,9 +344,9 @@ string BuildTestModel(tflite::TensorType tensor_type,
     node_def.set_name("Reshape");
     node_def.set_op("Reshape");
     (*node_def.mutable_attr())["T"].set_type(ToTfTensorType(tensor_type));
-    string node_def_str;
+    std::string node_def_str;
     CHECK(node_def.SerializeToString(&node_def_str));
-    auto flex_builder = absl::make_unique<flexbuffers::Builder>();
+    auto flex_builder = std::make_unique<flexbuffers::Builder>();
     flex_builder->Vector([&]() {
       flex_builder->String(node_def.op());
       flex_builder->String(node_def_str);
@@ -366,7 +373,7 @@ string BuildTestModel(tflite::TensorType tensor_type,
       builder.CreateVector(buffers)));
 
   if (signature_def_map) {
-    std::string model_buffer = string(
+    std::string model_buffer = std::string(
         reinterpret_cast<char*>(builder.GetBufferPointer()), builder.GetSize());
     std::string model_buffer_with_signature_def;
     auto model = tflite::FlatBufferModel::BuildFromModel(
@@ -377,8 +384,8 @@ string BuildTestModel(tflite::TensorType tensor_type,
     return model_buffer_with_signature_def;
   }
 
-  return string(reinterpret_cast<char*>(builder.GetBufferPointer()),
-                builder.GetSize());
+  return std::string(reinterpret_cast<char*>(builder.GetBufferPointer()),
+                     builder.GetSize());
 }
 
 // Returns a serialized FlatBuffer tflite model.
@@ -390,18 +397,19 @@ string BuildTestModel(tflite::TensorType tensor_type,
 // Elements of list are expected to be of `tensor_type` type. `use_flex_op`
 // sets up the model to use the `Reshape` *flex* op as opposed to using the
 // builtin `Reshape` op from TF Lite.
-string BuildTestModel(tflite::TensorType tensor_type, bool use_flex_op,
-                      std::map<string, SignatureDef>* signature_def_map) {
+std::string BuildTestModel(
+    tflite::TensorType tensor_type, bool use_flex_op,
+    std::map<std::string, SignatureDef>* signature_def_map) {
   return BuildTestModel(tensor_type, kTestModelInputList, kTestModelInputShape,
                         use_flex_op, signature_def_map);
 }
 
 TEST(TfLiteSession, ProcessStrings) {
   auto model_signature_def_map = GetTestSignatureDefMap();
-  string model_bytes =
+  std::string model_bytes =
       BuildTestModel(tflite::TensorType_STRING, /*use_flex_op=*/false,
                      &model_signature_def_map);
-  ::google::protobuf::Map<string, SignatureDef> signatures;
+  ::google::protobuf::Map<std::string, SignatureDef> signatures;
   std::unique_ptr<TfLiteSession> session;
   tensorflow::SessionOptions options;
   TF_ASSERT_OK(TfLiteSession::Create(
@@ -409,7 +417,7 @@ TEST(TfLiteSession, ProcessStrings) {
       absl::GetFlag(FLAGS_num_tflite_interpreters), &session, &signatures));
   Tensor input_list =
       test::AsTensor<tstring>({"a", "b", "c", "d"}, TensorShape({4}));
-  Tensor input_shape = test::AsTensor<int32>({2, 2}, TensorShape({2}));
+  Tensor input_shape = test::AsTensor<int32_t>({2, 2}, TensorShape({2}));
   std::vector<Tensor> outputs;
   TF_EXPECT_OK(session->Run(
       {{kTestModelInputList, input_list}, {kTestModelInputShape, input_shape}},
@@ -422,10 +430,10 @@ TEST(TfLiteSession, ProcessStrings) {
 
 TEST(TfLiteSession, ProcessStringsFlex) {
   auto model_signature_def_map = GetTestSignatureDefMap();
-  string model_bytes =
+  std::string model_bytes =
       BuildTestModel(tflite::TensorType_STRING, /*use_flex_op=*/true,
                      &model_signature_def_map);
-  ::google::protobuf::Map<string, SignatureDef> signatures;
+  ::google::protobuf::Map<std::string, SignatureDef> signatures;
   std::unique_ptr<TfLiteSession> session;
   tensorflow::SessionOptions options;
   TF_ASSERT_OK(TfLiteSession::Create(
@@ -433,7 +441,7 @@ TEST(TfLiteSession, ProcessStringsFlex) {
       absl::GetFlag(FLAGS_num_tflite_interpreters), &session, &signatures));
   Tensor input_list =
       test::AsTensor<tstring>({"a", "b", "c", "d"}, TensorShape({4}));
-  Tensor input_shape = test::AsTensor<int32>({2, 2}, TensorShape({2}));
+  Tensor input_shape = test::AsTensor<int32_t>({2, 2}, TensorShape({2}));
   std::vector<Tensor> outputs;
   TF_EXPECT_OK(session->Run(
       {{kTestModelInputList, input_list}, {kTestModelInputShape, input_shape}},
@@ -446,10 +454,10 @@ TEST(TfLiteSession, ProcessStringsFlex) {
 
 TEST(TfLiteSession, ThreadPoolOptions) {
   auto model_signature_def_map = GetTestSignatureDefMap();
-  string model_bytes =
+  std::string model_bytes =
       BuildTestModel(tflite::TensorType_STRING, /*use_flex_op=*/false,
                      &model_signature_def_map);
-  ::google::protobuf::Map<string, SignatureDef> signatures;
+  ::google::protobuf::Map<std::string, SignatureDef> signatures;
   std::unique_ptr<TfLiteSession> session;
   tensorflow::SessionOptions options;
   TF_ASSERT_OK(TfLiteSession::Create(
@@ -457,7 +465,7 @@ TEST(TfLiteSession, ThreadPoolOptions) {
       absl::GetFlag(FLAGS_num_tflite_interpreters), &session, &signatures));
   Tensor input_list =
       test::AsTensor<tstring>({"a", "b", "c", "d"}, TensorShape({4}));
-  Tensor input_shape = test::AsTensor<int32>({2, 2}, TensorShape({2}));
+  Tensor input_shape = test::AsTensor<int32_t>({2, 2}, TensorShape({2}));
   std::vector<Tensor> outputs;
   RunMetadata run_metadata;
   thread::ThreadPoolOptions thread_pool_options;
@@ -482,13 +490,13 @@ TEST(TfLiteSession, ThreadPoolOptions) {
 
 TEST(TfLiteSession, SimpleSignatureDef) {
   auto model_signature_def_map = GetTestSignatureDefMap();
-  string model_bytes =
+  std::string model_bytes =
       BuildTestModel(tflite::TensorType_STRING, /*use_flex_op=*/false,
                      &model_signature_def_map);
 
-  ::google::protobuf::Map<string, SignatureDef> signatures;
+  ::google::protobuf::Map<std::string, SignatureDef> signatures;
   // Fill an entry in the output signatures map, to check that it gets cleared
-  string kResidualSignatureKey = "residual_signature";
+  std::string kResidualSignatureKey = "residual_signature";
   signatures[kResidualSignatureKey] = SignatureDef();
 
   std::unique_ptr<TfLiteSession> session;
@@ -526,12 +534,12 @@ TEST(TfLiteSession, MultipleSignatureDef) {
   (*signature2.mutable_outputs())[kSignatureOutput] = output_tensor;
   constexpr char kSignatureKey1[] = "signature1";
   constexpr char kSignatureKey2[] = "signature2";
-  std::map<string, SignatureDef> signature_def_map = {
+  std::map<std::string, SignatureDef> signature_def_map = {
       {kSignatureKey1, signature1}, {kSignatureKey2, signature2}};
 
-  string model_bytes = BuildTestModel(
+  std::string model_bytes = BuildTestModel(
       tflite::TensorType_STRING, /*use_flex_op=*/false, &signature_def_map);
-  ::google::protobuf::Map<string, SignatureDef> signatures;
+  ::google::protobuf::Map<std::string, SignatureDef> signatures;
   std::unique_ptr<TfLiteSession> session;
   tensorflow::SessionOptions options;
   TF_EXPECT_OK(TfLiteSession::Create(
@@ -580,12 +588,12 @@ TEST(TfLiteSession, SignatureDefWithCommonTensorPrefix) {
           method_name: "tensorflow/serving/predict"
         )",
                                         &signature);
-  std::map<string, SignatureDef> signature_def_map = {
+  std::map<std::string, SignatureDef> signature_def_map = {
       {kDefaultServingSignatureDefKey, signature}};
-  string model_bytes =
+  std::string model_bytes =
       BuildTestModel(tflite::TensorType_STRING, "myTensor:0", "myTensor:1",
                      /*use_flex_op=*/false, &signature_def_map);
-  ::google::protobuf::Map<string, SignatureDef> signatures;
+  ::google::protobuf::Map<std::string, SignatureDef> signatures;
   std::unique_ptr<TfLiteSession> session;
   tensorflow::SessionOptions options;
   TF_ASSERT_OK(TfLiteSession::Create(
@@ -594,7 +602,7 @@ TEST(TfLiteSession, SignatureDefWithCommonTensorPrefix) {
 
   // Inputs must still be processed as two different tensors.
   auto outputSigdef = signatures[kDefaultServingSignatureDefKey];
-  std::set<string> tensorNamesSet;
+  std::set<std::string> tensorNamesSet;
   for (const auto& input : outputSigdef.inputs()) {
     tensorNamesSet.insert(input.second.name());
   }
@@ -603,10 +611,10 @@ TEST(TfLiteSession, SignatureDefWithCommonTensorPrefix) {
 
 TEST(TfLiteSession, SimpleSignatureDefAndRun) {
   auto model_signature_def_map = GetTestSignatureDefMap();
-  string model_bytes =
+  std::string model_bytes =
       BuildTestModel(tflite::TensorType_STRING, /*use_flex_op=*/false,
                      &model_signature_def_map);
-  ::google::protobuf::Map<string, SignatureDef> signatures;
+  ::google::protobuf::Map<std::string, SignatureDef> signatures;
   std::unique_ptr<TfLiteSession> session;
   tensorflow::SessionOptions options;
   TF_EXPECT_OK(TfLiteSession::Create(
@@ -623,7 +631,7 @@ TEST(TfLiteSession, SimpleSignatureDefAndRun) {
 
   Tensor input_list =
       test::AsTensor<tstring>({"a", "b", "c", "d"}, TensorShape({4}));
-  Tensor input_shape = test::AsTensor<int32>({2, 2}, TensorShape({2}));
+  Tensor input_shape = test::AsTensor<int32_t>({2, 2}, TensorShape({2}));
   std::vector<Tensor> outputs;
   TF_EXPECT_OK(session->Run(
       {{kTestModelInputList, input_list}, {kTestModelInputShape, input_shape}},
@@ -634,9 +642,9 @@ TEST(TfLiteSession, SimpleSignatureDefAndRun) {
       test::AsTensor<tstring>({"a", "b", "c", "d"}, TensorShape({2, 2})));
 }
 
-Status BuildSessionInBatch(std::unique_ptr<TfLiteSession>* sess,
-                           bool use_model_batch_size,
-                           const string& model_path) {
+absl::Status BuildSessionInBatch(std::unique_ptr<TfLiteSession>* sess,
+                                 bool use_model_batch_size,
+                                 const std::string& model_path) {
   std::string model_bytes;
   TF_RETURN_IF_ERROR(ReadFileToString(
       Env::Default(), test_util::TestSrcDirPath(model_path), &model_bytes));
@@ -645,28 +653,28 @@ Status BuildSessionInBatch(std::unique_ptr<TfLiteSession>* sess,
   const int model_batch_size = 5;
   if (use_model_batch_size) {
     const tflite::Model* tflite_model = model->GetModel();
-    auto mutable_model = absl::make_unique<tflite::ModelT>();
+    auto mutable_model = std::make_unique<tflite::ModelT>();
     tflite_model->UnPackTo(mutable_model.get(), nullptr);
 
     if (mutable_model->subgraphs.size() != 1) {
-      return Status(
-          tensorflow::error::INVALID_ARGUMENT,
-          strings::StrCat("Model subgraph size ",
-                          mutable_model->subgraphs.size(), " not equal to 1"));
+      return absl::Status(
+          static_cast<absl::StatusCode>(absl::StatusCode::kInvalidArgument),
+          absl::StrCat("Model subgraph size ", mutable_model->subgraphs.size(),
+                       " not equal to 1"));
     }
     auto* subgraph = mutable_model->subgraphs[0].get();
     if (subgraph->inputs.size() != 1) {
-      return Status(
-          tensorflow::error::INVALID_ARGUMENT,
-          strings::StrCat("Model subgraph input size ",
-                          mutable_model->subgraphs.size(), " not equal to 1"));
+      return absl::Status(
+          static_cast<absl::StatusCode>(absl::StatusCode::kInvalidArgument),
+          absl::StrCat("Model subgraph input size ",
+                       mutable_model->subgraphs.size(), " not equal to 1"));
     }
     auto* tensor = subgraph->tensors[subgraph->inputs[0]].get();
     if (tensor->shape[0] != 1) {
-      return Status(
-          tensorflow::error::INVALID_ARGUMENT,
-          strings::StrCat("Model subgraph input shape[0] ",
-                          mutable_model->subgraphs.size(), " not equal to 1"));
+      return absl::Status(
+          static_cast<absl::StatusCode>(absl::StatusCode::kInvalidArgument),
+          absl::StrCat("Model subgraph input shape[0] ",
+                       mutable_model->subgraphs.size(), " not equal to 1"));
     }
     tensor->shape[0] = model_batch_size;
     flatbuffers::FlatBufferBuilder builder;
@@ -677,7 +685,7 @@ Status BuildSessionInBatch(std::unique_ptr<TfLiteSession>* sess,
         builder.GetSize());
   }
   auto model_signature_def_map = GetTestSignatureDefMap();
-  ::google::protobuf::Map<string, SignatureDef> signatures;
+  ::google::protobuf::Map<std::string, SignatureDef> signatures;
   tensorflow::SessionOptions options;
   const int num_tflite_interpreters = 4;
 
@@ -689,13 +697,13 @@ Status BuildSessionInBatch(std::unique_ptr<TfLiteSession>* sess,
                                       ? model_batch_size
                                       : kBatchSize / num_tflite_interpreters;
   if (scheduler_options.max_execution_batch_size != expected_batch_size) {
-    return Status(
-        tensorflow::error::INVALID_ARGUMENT,
-        strings::StrCat("Scheulder max_execution_batch_size ",
-                        scheduler_options.max_execution_batch_size,
-                        " not equal to expected ", expected_batch_size));
+    return absl::Status(
+        static_cast<absl::StatusCode>(absl::StatusCode::kInvalidArgument),
+        absl::StrCat("Scheulder max_execution_batch_size ",
+                     scheduler_options.max_execution_batch_size,
+                     " not equal to expected ", expected_batch_size));
   }
-  return Status();
+  return absl::Status();
 }
 
 using TfLiteSessionBatchSizeTest = ::testing::TestWithParam<bool>;
@@ -780,7 +788,7 @@ TEST(TfLiteSession, TestSetScheduler) {
   auto model = tflite::FlatBufferModel::BuildFromModel(
       flatbuffers::GetRoot<tflite::Model>(model_bytes.data()));
   auto model_signature_def_map = GetTestSignatureDefMap();
-  ::google::protobuf::Map<string, SignatureDef> signatures;
+  ::google::protobuf::Map<std::string, SignatureDef> signatures;
   std::unique_ptr<TfLiteSession> sess;
   tensorflow::SessionOptions options;
 
@@ -867,9 +875,9 @@ static void BM_Reshape(benchmark::State& state, bool use_flex_op) {
   static TfLiteSession* session;
   if (state.thread_index() == 0) {
     auto model_signature_def_map = GetTestSignatureDefMap();
-    string model_bytes = BuildTestModel(tflite::TensorType_INT32, use_flex_op,
-                                        &model_signature_def_map);
-    ::google::protobuf::Map<string, SignatureDef> signatures;
+    std::string model_bytes = BuildTestModel(
+        tflite::TensorType_INT32, use_flex_op, &model_signature_def_map);
+    ::google::protobuf::Map<std::string, SignatureDef> signatures;
     std::unique_ptr<TfLiteSession> sess;
     tensorflow::SessionOptions options;
     TF_ASSERT_OK(TfLiteSession::Create(
@@ -877,8 +885,8 @@ static void BM_Reshape(benchmark::State& state, bool use_flex_op) {
         absl::GetFlag(FLAGS_num_tflite_interpreters), &sess, &signatures));
     session = sess.release();
   }
-  Tensor input = test::AsTensor<int32>({1, 2, 3, 4, 5, 6}, TensorShape({6}));
-  Tensor input_shape = test::AsTensor<int32>({3, 2}, TensorShape({2}));
+  Tensor input = test::AsTensor<int32_t>({1, 2, 3, 4, 5, 6}, TensorShape({6}));
+  Tensor input_shape = test::AsTensor<int32_t>({3, 2}, TensorShape({2}));
   std::vector<Tensor> outputs;
   for (auto _ : state) {
     outputs.clear();
@@ -901,10 +909,10 @@ BENCHMARK(BM_Reshape_Flex)->UseRealTime()->ThreadRange(1, 64);
 void BM_HalfPlusTwo(benchmark::State& state) {
   static TfLiteSession* session;
   if (state.thread_index() == 0) {
-    string model_bytes;
+    std::string model_bytes;
     TF_ASSERT_OK(ReadFileToString(
         Env::Default(), test_util::TestSrcDirPath(kTestModel), &model_bytes));
-    ::google::protobuf::Map<string, SignatureDef> signatures;
+    ::google::protobuf::Map<std::string, SignatureDef> signatures;
     std::unique_ptr<TfLiteSession> sess;
     tensorflow::SessionOptions options;
     TF_ASSERT_OK(TfLiteSession::Create(
@@ -924,11 +932,11 @@ BENCHMARK(BM_HalfPlusTwo)->UseRealTime()->ThreadRange(1, 64);
 void BM_MobileNet(benchmark::State& state) {
   static TfLiteSession* session;
   if (state.thread_index() == 0) {
-    string model_bytes;
+    std::string model_bytes;
     TF_ASSERT_OK(ReadFileToString(Env::Default(),
                                   test_util::TestSrcDirPath(kMobileNetModel),
                                   &model_bytes));
-    ::google::protobuf::Map<string, SignatureDef> signatures;
+    ::google::protobuf::Map<std::string, SignatureDef> signatures;
     std::unique_ptr<TfLiteSession> sess;
     tensorflow::SessionOptions options;
     TF_ASSERT_OK(TfLiteSession::Create(
@@ -936,8 +944,8 @@ void BM_MobileNet(benchmark::State& state) {
         absl::GetFlag(FLAGS_num_tflite_interpreters), &sess, &signatures));
     session = sess.release();
   }
-  std::vector<uint8> x_data(1 * 224 * 224 * 3, 1);
-  Tensor x = test::AsTensor<uint8>(x_data, TensorShape({1, 224, 224, 3}));
+  std::vector<uint8_t> x_data(1 * 224 * 224 * 3, 1);
+  Tensor x = test::AsTensor<uint8_t>(x_data, TensorShape({1, 224, 224, 3}));
   std::vector<Tensor> outputs;
   for (auto _ : state) {
     outputs.clear();
@@ -950,11 +958,11 @@ BENCHMARK(BM_MobileNet)->UseRealTime()->ThreadRange(1, 64);
 void BM_ParseExample(benchmark::State& state) {
   static TfLiteSession* session;
   if (state.thread_index() == 0) {
-    string model_bytes;
+    std::string model_bytes;
     TF_ASSERT_OK(ReadFileToString(Env::Default(),
                                   test_util::TestSrcDirPath(kParseExampleModel),
                                   &model_bytes));
-    ::google::protobuf::Map<string, SignatureDef> signatures;
+    ::google::protobuf::Map<std::string, SignatureDef> signatures;
     std::unique_ptr<TfLiteSession> sess;
     tensorflow::SessionOptions options;
     TF_ASSERT_OK(TfLiteSession::Create(

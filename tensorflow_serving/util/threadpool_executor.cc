@@ -15,10 +15,12 @@ limitations under the License.
 
 #include "tensorflow_serving/util/threadpool_executor.h"
 
+#include <functional>
+
 namespace tensorflow {
 namespace serving {
 
-ThreadPoolExecutor::ThreadPoolExecutor(Env* const env, const string& name,
+ThreadPoolExecutor::ThreadPoolExecutor(Env* const env, const std::string& name,
                                        int num_threads)
     : thread_pool_(env, name, num_threads) {}
 

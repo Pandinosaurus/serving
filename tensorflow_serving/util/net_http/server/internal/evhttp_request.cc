@@ -17,13 +17,14 @@ limitations under the License.
 
 #include "tensorflow_serving/util/net_http/server/internal/evhttp_request.h"
 
-#include <zlib.h>
-
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <functional>
+#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "absl/strings/match.h"
@@ -33,6 +34,7 @@ limitations under the License.
 #include "libevent/include/event2/event.h"
 #include "libevent/include/event2/http.h"
 #include "libevent/include/event2/keyvalq_struct.h"
+#include <zlib.h>
 #include "tensorflow_serving/util/net_http/compression/gzip_zlib.h"
 #include "tensorflow_serving/util/net_http/internal/net_logging.h"
 #include "tensorflow_serving/util/net_http/public/header_names.h"

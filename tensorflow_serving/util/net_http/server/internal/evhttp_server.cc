@@ -22,7 +22,10 @@ limitations under the License.
 #include <sys/socket.h>
 
 #include <cstdint>
+#include <functional>
 #include <memory>
+#include <string>
+#include <tuple>
 #include <utility>
 
 #include "absl/base/call_once.h"
@@ -124,7 +127,7 @@ void EvHTTPServer::DispatchEvRequestFn(evhttp_request* req, void* server) {
 }
 
 void EvHTTPServer::DispatchEvRequest(evhttp_request* req) {
-  auto parsed_request = absl::make_unique<ParsedEvRequest>(req);
+  auto parsed_request = std::make_unique<ParsedEvRequest>(req);
 
   if (!parsed_request->decode()) {
     evhttp_send_error(req, HTTP_BADREQUEST, nullptr);
@@ -143,7 +146,7 @@ void EvHTTPServer::DispatchEvRequest(evhttp_request* req) {
   }
 
   {
-    absl::MutexLock l(&request_mu_);
+    absl::MutexLock l(request_mu_);
 
     auto handler_map_it = uri_handlers_.find(path);
     if (handler_map_it != uri_handlers_.end()) {
@@ -220,14 +223,25 @@ bool EvHTTPServer::StartAcceptingRequests() {
 
   const int port = server_options_->ports().front();
 
-  // "::"  =>  in6addr_any
-  ev_uint16_t ev_port = static_cast<ev_uint16_t>(port);
-  ev_listener_ = evhttp_bind_socket_with_handle(ev_http_, "::", ev_port);
-  if (ev_listener_ == nullptr) {
-    // in case ipv6 is not supported, fallback to inaddr_any
-    ev_listener_ = evhttp_bind_socket_with_handle(ev_http_, nullptr, ev_port);
+  if (server_options_->ip_addresses().empty()) {
+    // "::"  =>  in6addr_any
+    ev_uint16_t ev_port = static_cast<ev_uint16_t>(port);
+    ev_listener_ = evhttp_bind_socket_with_handle(ev_http_, "::", ev_port);
     if (ev_listener_ == nullptr) {
-      NET_LOG(ERROR, "Couldn't bind to port %d", port);
+      // in case ipv6 is not supported, fallback to inaddr_any
+      ev_listener_ = evhttp_bind_socket_with_handle(ev_http_, nullptr, ev_port);
+      if (ev_listener_ == nullptr) {
+        NET_LOG(ERROR, "Couldn't bind to port %d", port);
+        return false;
+      }
+    }
+  } else {
+    const std::string& ip_address = server_options_->ip_addresses().front();
+    ev_listener_ =
+        evhttp_bind_socket_with_handle(ev_http_, ip_address.c_str(), port);
+    if (ev_listener_ == nullptr) {
+      NET_LOG(ERROR, "Couldn't bind address %s to port %d", ip_address.c_str(),
+              port);
       return false;
     }
   }
@@ -240,16 +254,16 @@ bool EvHTTPServer::StartAcceptingRequests() {
     ResolveEphemeralPort(ev_listener_, &port_);
   }
 
+  accepting_requests_.Notify();
+
   IncOps();
   server_options_->executor()->Schedule([this]() {
     NET_LOG(INFO, "Entering the event loop ...");
-    int result = event_base_dispatch(ev_base_);
-    NET_LOG(INFO, "event_base_dispatch() exits with value %d", result);
+    int result = event_base_loop(ev_base_, EVLOOP_NO_EXIT_ON_EMPTY);
+    NET_LOG(INFO, "event_base_loop() exits with value %d", result);
 
     DecOps();
   });
-
-  accepting_requests_.Notify();
 
   return true;
 }
@@ -294,18 +308,18 @@ bool EvHTTPServer::is_terminating() const {
 }
 
 void EvHTTPServer::IncOps() {
-  absl::MutexLock l(&ops_mu_);
+  absl::MutexLock l(ops_mu_);
   num_pending_ops_++;
 }
 
 void EvHTTPServer::DecOps() {
-  absl::MutexLock l(&ops_mu_);
+  absl::MutexLock l(ops_mu_);
   num_pending_ops_--;
 }
 
 void EvHTTPServer::WaitForTermination() {
   {
-    absl::MutexLock l(&ops_mu_);
+    absl::MutexLock l(ops_mu_);
     ops_mu_.Await(absl::Condition(
         +[](int64_t* count) { return *count <= 1; }, &num_pending_ops_));
   }
@@ -314,7 +328,7 @@ void EvHTTPServer::WaitForTermination() {
   NET_LOG(INFO, "event_base_loopexit() exits with value %d", result);
 
   {
-    absl::MutexLock l(&ops_mu_);
+    absl::MutexLock l(ops_mu_);
     ops_mu_.Await(absl::Condition(
         +[](int64_t* count) { return *count == 0; }, &num_pending_ops_));
   }
@@ -324,7 +338,7 @@ bool EvHTTPServer::WaitForTerminationWithTimeout(absl::Duration timeout) {
   bool wait_result = true;
 
   {
-    absl::MutexLock l(&ops_mu_);
+    absl::MutexLock l(ops_mu_);
     wait_result = ops_mu_.AwaitWithTimeout(
         absl::Condition(
             +[](int64_t* count) { return *count <= 1; }, &num_pending_ops_),
@@ -337,7 +351,7 @@ bool EvHTTPServer::WaitForTerminationWithTimeout(absl::Duration timeout) {
 
     // This should pass immediately
     {
-      absl::MutexLock l(&ops_mu_);
+      absl::MutexLock l(ops_mu_);
       wait_result = ops_mu_.AwaitWithTimeout(
           absl::Condition(
               +[](int64_t* count) { return *count == 0; }, &num_pending_ops_),
@@ -362,7 +376,7 @@ EvHTTPServer::DispatcherInfo::DispatcherInfo(
 void EvHTTPServer::RegisterRequestHandler(
     absl::string_view uri, RequestHandler handler,
     const RequestHandlerOptions& options) {
-  absl::MutexLock l(&request_mu_);
+  absl::MutexLock l(request_mu_);
   auto result = uri_handlers_.emplace(
       std::piecewise_construct, std::forward_as_tuple(uri),
       std::forward_as_tuple(uri, handler, options));
@@ -386,7 +400,7 @@ void EvHTTPServer::RegisterRequestHandler(
 
 void EvHTTPServer::RegisterRequestDispatcher(
     RequestDispatcher dispatcher, const RequestHandlerOptions& options) {
-  absl::MutexLock l(&request_mu_);
+  absl::MutexLock l(request_mu_);
   dispatchers_.emplace_back(dispatcher, options);
 }
 

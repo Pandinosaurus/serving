@@ -16,7 +16,9 @@ limitations under the License.
 #include "tensorflow_serving/servables/hashmap/hashmap_source_adapter.h"
 
 #include <stddef.h>
+
 #include <memory>
+#include <unordered_map>
 #include <vector>
 
 #include "tensorflow/core/lib/core/errors.h"
@@ -30,12 +32,12 @@ namespace tensorflow {
 namespace serving {
 namespace {
 
-using Hashmap = std::unordered_map<string, string>;
+using Hashmap = std::unordered_map<std::string, std::string>;
 
 // Populates a hashmap from a file located at 'path', in format 'format'.
-Status LoadHashmapFromFile(const string& path,
-                           const HashmapSourceAdapterConfig::Format& format,
-                           std::unique_ptr<Hashmap>* hashmap) {
+absl::Status LoadHashmapFromFile(
+    const std::string& path, const HashmapSourceAdapterConfig::Format& format,
+    std::unique_ptr<Hashmap>* hashmap) {
   hashmap->reset(new Hashmap);
   switch (format) {
     case HashmapSourceAdapterConfig::SIMPLE_CSV: {
@@ -43,23 +45,23 @@ Status LoadHashmapFromFile(const string& path,
       TF_RETURN_IF_ERROR(Env::Default()->NewRandomAccessFile(path, &file));
       const size_t kBufferSizeBytes = 262144;
       io::InputBuffer in(file.get(), kBufferSizeBytes);
-      string line;
+      std::string line;
       while (in.ReadLine(&line).ok()) {
-        std::vector<string> cols = str_util::Split(line, ',');
+        std::vector<std::string> cols = str_util::Split(line, ',');
         if (cols.size() != 2) {
-          return errors::InvalidArgument("Unexpected format.");
+          return absl::InvalidArgumentError("Unexpected format.");
         }
-        const string& key = cols[0];
-        const string& value = cols[1];
+        const std::string& key = cols[0];
+        const std::string& value = cols[1];
         (*hashmap)->insert({key, value});
       }
       break;
     }
     default:
-      return errors::InvalidArgument("Unrecognized format enum value: ",
-                                     format);
+      return absl::InvalidArgumentError(
+          absl::StrCat("Unrecognized format enum value: ", format));
   }
-  return Status();
+  return absl::Status();
 }
 
 }  // namespace

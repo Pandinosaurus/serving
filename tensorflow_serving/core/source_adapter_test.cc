@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <memory>
 #include <string>
+#include <vector>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -47,7 +48,7 @@ class LimitedAdapter final : public SourceAdapter<StoragePath, StoragePath> {
 
  protected:
   std::vector<ServableData<StoragePath>> Adapt(
-      const StringPiece servable_name,
+      const absl::string_view servable_name,
       std::vector<ServableData<StoragePath>> versions) override {
     CHECK(versions.empty());
     return {};
@@ -95,19 +96,21 @@ TEST(UnarySourceAdapterTest, Basic) {
               ServableData<StoragePath>({"foo", 0}, "mrop"),
               ServableData<StoragePath>(
                   {"foo", 1},
-                  errors::InvalidArgument(
+                  absl::InvalidArgumentError(
                       "FakeStoragePathSourceAdapter Convert() dutifully "
                       "failing on \"invalid\" data")),
-              ServableData<StoragePath>({"foo", 2}, errors::Unknown("d'oh")))));
+              ServableData<StoragePath>({"foo", 2},
+                                        absl::UnknownError("d'oh")))));
   adapter.SetAspiredVersions(
-      "foo", {ServableData<StoragePath>({"foo", 0}, "mrop"),
-              ServableData<StoragePath>({"foo", 1}, "invalid"),
-              ServableData<StoragePath>({"foo", 2}, errors::Unknown("d'oh"))});
+      "foo",
+      {ServableData<StoragePath>({"foo", 0}, "mrop"),
+       ServableData<StoragePath>({"foo", 1}, "invalid"),
+       ServableData<StoragePath>({"foo", 2}, absl::UnknownError("d'oh"))});
 }
 
 TEST(ErrorInjectingSourceAdapterTest, Basic) {
-  ErrorInjectingSourceAdapter<string, string> adapter(
-      errors::Unknown("Injected error"));
+  ErrorInjectingSourceAdapter<std::string, std::string> adapter(
+      absl::UnknownError("Injected error"));
   std::unique_ptr<test_util::MockStoragePathTarget> target(
       new StrictMock<test_util::MockStoragePathTarget>);
   ConnectSourceToTarget(&adapter, target.get());
@@ -116,13 +119,13 @@ TEST(ErrorInjectingSourceAdapterTest, Basic) {
       SetAspiredVersions(
           Eq("foo"),
           ElementsAre(ServableData<StoragePath>(
-                          {"foo", 0}, errors::Unknown("Injected error")),
+                          {"foo", 0}, absl::UnknownError("Injected error")),
                       ServableData<StoragePath>(
-                          {"foo", 1}, errors::Unknown("Original error")))));
+                          {"foo", 1}, absl::UnknownError("Original error")))));
   adapter.SetAspiredVersions(
       "foo", {ServableData<StoragePath>({"foo", 0}, "mrop"),
               ServableData<StoragePath>({"foo", 1},
-                                        errors::Unknown("Original error"))});
+                                        absl::UnknownError("Original error"))});
 }
 
 }  // namespace

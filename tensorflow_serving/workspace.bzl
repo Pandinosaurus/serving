@@ -4,17 +4,41 @@ Some of the external dependencies need to be initialized. To do this, duplicate
 the initialization code from TensorFlow Serving's WORKSPACE file.
 """
 
-load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 load("@bazel_tools//tools/build_defs/repo:git.bzl", "new_git_repository")
+load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 
 def tf_serving_workspace():
     """All TensorFlow Serving external dependencies."""
 
+    http_archive(
+        name = "rules_proto",
+        sha256 = "a88d018bdcb8df1ce8185470eb4b4899d778f9ac3a66cb36d514beb81e345282",
+        strip_prefix = "rules_proto-6.0.0-rc3",
+        url = "https://github.com/bazelbuild/rules_proto/archive/refs/tags/6.0.0-rc3.tar.gz",
+    )
+
+    http_archive(
+        name = "utf8_range",
+        urls = ["https://github.com/protocolbuffers/utf8_range/archive/de0b4a8ff9b5d4c98108bdfe723291a33c52c54f.zip"],
+        strip_prefix = "utf8_range-de0b4a8ff9b5d4c98108bdfe723291a33c52c54f",
+        sha256 = "5da960e5e5d92394c809629a03af3c7709d2d3d0ca731dacb3a9fb4bf28f7702",
+    )
+
+    http_archive(
+        name = "rules_ruby",
+        urls = ["https://github.com/protocolbuffers/rules_ruby/archive/8fca842a3006c3d637114aba4f6bf9695bb3a432.zip"],
+        strip_prefix = "rules_ruby-8fca842a3006c3d637114aba4f6bf9695bb3a432",
+        sha256 = "2619f9a23cee6f6a198d9ef284b6f6cbc901545ee9a9aac9ffa6b83dbf17cf0c",
+    )
+
     # ===== Bazel skylib dependency =====
     http_archive(
         name = "bazel_skylib",
-        sha256 = "74d544d96f4a5bb630d465ca8bbcfe231e3594e5aae57e1edbf17a6eb3ca2506",
-        url = "https://github.com/bazelbuild/bazel-skylib/releases/download/1.3.0/bazel-skylib-1.3.0.tar.gz",
+        sha256 = "bc283cdfcd526a52c3201279cda4bc298652efa898b10b4db0837dc51652756f",
+        urls = [
+            "https://mirror.bazel.build/github.com/bazelbuild/bazel-skylib/releases/download/1.7.1/bazel-skylib-1.7.1.tar.gz",
+            "https://github.com/bazelbuild/bazel-skylib/releases/download/1.7.1/bazel-skylib-1.7.1.tar.gz",
+        ],
     )
 
     # ===== Bazel package rules dependency =====
@@ -36,9 +60,9 @@ def tf_serving_workspace():
     # ===== libevent (libevent.org) dependency =====
     http_archive(
         name = "com_github_libevent_libevent",
-        url = "https://github.com/libevent/libevent/archive/release-2.1.8-stable.zip",
-        sha256 = "70158101eab7ed44fd9cc34e7f247b3cae91a8e4490745d9d6eb7edc184e4d96",
-        strip_prefix = "libevent-release-2.1.8-stable",
+        url = "https://github.com/libevent/libevent/archive/release-2.1.12-stable.zip",
+        sha256 = "8836ad722ab211de41cb82fe098911986604f6286f67d10dfb2b6787bf418f49",
+        strip_prefix = "libevent-release-2.1.12-stable",
         build_file = "@//third_party/libevent:BUILD",
     )
 
@@ -47,15 +71,19 @@ def tf_serving_workspace():
     # that contains all data.
     http_archive(
         name = "icu",
-        strip_prefix = "icu-release-64-2",
-        sha256 = "dfc62618aa4bd3ca14a3df548cd65fe393155edd213e49c39f3a30ccd618fc27",
+        strip_prefix = "icu-release-77-1",
+        sha256 = "e424ba5282d95ad38b52639a08fb82164f0b0cbd7f17b53ae16bf14f8541855f",
         urls = [
-            "https://storage.googleapis.com/mirror.tensorflow.org/github.com/unicode-org/icu/archive/release-64-2.zip",
-            "https://github.com/unicode-org/icu/archive/release-64-2.zip",
+            "https://storage.googleapis.com/mirror.tensorflow.org/github.com/unicode-org/icu/archive/release-77-1.zip",
+            "https://github.com/unicode-org/icu/archive/release-77-1.zip",
         ],
         build_file = "//third_party/icu:BUILD",
         patches = ["//third_party/icu:data.patch"],
         patch_args = ["-p1", "-s"],
+        patch_cmds = [
+            "rm -f icu4c/source/common/BUILD.bazel",
+            "rm -f icu4c/source/stubdata/BUILD.bazel",
+        ],
     )
 
     # ===== TF.Text dependencies
@@ -64,12 +92,20 @@ def tf_serving_workspace():
     # https://github.com/tensorflow/text/blob/master/oss_scripts/model_server/save_models.py
     http_archive(
         name = "org_tensorflow_text",
-        sha256 = "556b516d917265a03e2712389e39e14f6d0faed6421215bd8c1e83d98fd270fb",
-        strip_prefix = "text-2.11.0",
-        url = "https://github.com/tensorflow/text/archive/v2.11.0.zip",
-        patches = ["@//third_party/tf_text:tftext.patch"],
-        patch_args = ["-p1"],
-        repo_mapping = {"@com_google_re2": "@com_googlesource_code_re2"},
+        sha256 = "be11bd741fa1ade66210798c37818c6e995ea462d4ab8fbdcdda2bf87322fa61",
+        strip_prefix = "text-2.21.1",
+        urls = [
+            "https://storage.googleapis.com/mirror.tensorflow.org/github.com/tensorflow/text/archive/v2.21.1.zip",
+            "https://github.com/tensorflow/text/archive/v2.21.1.zip",
+        ],
+        repo_mapping = {
+            "@com_google_re2": "@com_googlesource_code_re2",
+            "@release_or_nightly": "@org_tensorflow",
+        },
+        patch_cmds = [
+            "find . -name \"tftext.bzl\" -exec sed -i 's|deps = deps,|deps = deps + [\"@com_google_protobuf\" + \"//:protobuf\"],|g' {} +",
+            "find . -name \"tftext.bzl\" -exec sed -i '/absl\\/utility:if_constexpr/d' {} +",
+        ],
     )
 
     http_archive(
@@ -107,16 +143,38 @@ def tf_serving_workspace():
     # ==== TensorFlow Decision Forests ===
     http_archive(
         name = "org_tensorflow_decision_forests",
-        sha256 = "00c73fbb1ddde7f11fbb5277e9cc9a0922b5f1213c6bd1038769ee451be4ba87",
-        strip_prefix = "decision-forests-1.1.0",
-        url = "https://github.com/tensorflow/decision-forests/archive/refs/tags/1.1.0.zip",
+        sha256 = "86686bcb03bcf280cf739159fe4c285c667500a332292701259e636f5e1ec110",
+        strip_prefix = "decision-forests-1.3.0",
+        urls = [
+            "https://storage.googleapis.com/mirror.tensorflow.org/github.com/tensorflow/decision-forests/archive/refs/tags/1.3.0.zip",
+            "https://github.com/tensorflow/decision-forests/archive/refs/tags/1.3.0.zip",
+        ],
+        patches = ["@//third_party/tf_decision_forests:tf_decision_forests.patch"],
+        patch_args = ["-p1"],
+        patch_cmds = [
+            "find . -name \"*.bzl\" -exec sed -i 's|load(\"@com_google_pro[t]obuf//:protobuf.bzl\", \"py_proto_library\")|load(\"@com_google_pr\\otobuf//bazel:py_proto_library.bzl\", \"py_proto_library\")|g' {} +",
+            "find . -name \"*.bzl\" -exec sed -i 's|^\\s*srcs = srcs,|           deps = [\":\" + name],|g' {} +",
+            "find . -name \"*.bzl\" -exec sed -i 's|           deps = old_deps,|           # deps = old_deps,|g' {} +",
+            "find . -name \"*.cc\" -exec sed -i '1i #include <algorithm>' {} +",
+            "find . -name \"*.cc\" -exec sed -i 's/google::protobuf::Arena::CreateMessage/google::protobuf::Arena::Create/g' {} +",
+        ],
     )
 
     http_archive(
         name = "ydf",
-        sha256 = "8d577e2628201ec2a2c1708192a23e5b34a2fcc126b6e043fef613886857c9a6",
-        strip_prefix = "yggdrasil-decision-forests-1.2.0",
-        urls = ["https://github.com/google/yggdrasil-decision-forests/archive/refs/tags/1.2.0.zip"],
+        sha256 = "5abb2e440c0b8b13095bd208cfab3a5e569706af9a52b6a702d86ec0e25a7991",
+        strip_prefix = "yggdrasil-decision-forests-1.4.0",
+        urls = [
+            "https://storage.googleapis.com/mirror.tensorflow.org/github.com/google/yggdrasil-decision-forests/archive/refs/tags/1.4.0.zip",
+            "https://github.com/google/yggdrasil-decision-forests/archive/refs/tags/1.4.0.zip",
+        ],
+        patch_cmds = [
+            "find . -name \"*.bzl\" -exec sed -i 's|load(\"@com_google_pro[t]obuf//:protobuf.bzl\", \"py_proto_library\")|load(\"@com_google_pr\\otobuf//bazel:py_proto_library.bzl\", \"py_proto_library\")|g' {} +",
+            "find . -name \"*.bzl\" -exec sed -i 's|           srcs = srcs,|           deps = [\":\" + name],|g' {} +",
+            "find . -name \"*.bzl\" -exec sed -i 's|           deps = old_deps,|           # deps = old_deps,|g' {} +",
+            "find . -name \"*.cc\" -exec sed -i '1i #include <algorithm>' {} +",
+            "find . -name \"*.cc\" -exec sed -i 's/google::protobuf::Arena::CreateMessage/google::protobuf::Arena::Create/g' {} +",
+        ],
     )
 
     # The Boost repo is organized into git sub-modules (see the list at
@@ -129,3 +187,5 @@ def tf_serving_workspace():
         recursive_init_submodules = True,
         remote = "https://github.com/boostorg/boost",
     )
+
+    # Kokoro force build 9

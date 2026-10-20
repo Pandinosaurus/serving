@@ -15,24 +15,29 @@ limitations under the License.
 
 #include "tensorflow_serving/util/file_probing_env.h"
 
+#include <string>
+#include <vector>
+
+#include "absl/strings/string_view.h"
+
 namespace tensorflow {
 namespace serving {
 
-Status TensorflowFileProbingEnv::FileExists(const string& fname) {
-  return env_->FileExists(fname);
+absl::Status TensorflowFileProbingEnv::FileExists(absl::string_view fname) {
+  return env_->FileExists(std::string(fname));
 }
 
-Status TensorflowFileProbingEnv::GetChildren(const string& dir,
-                                             std::vector<string>* children) {
+absl::Status TensorflowFileProbingEnv::GetChildren(
+    const std::string& dir, std::vector<std::string>* children) {
   return env_->GetChildren(dir, children);
 }
 
-Status TensorflowFileProbingEnv::IsDirectory(const string& fname) {
+absl::Status TensorflowFileProbingEnv::IsDirectory(const std::string& fname) {
   return env_->IsDirectory(fname);
 }
 
-Status TensorflowFileProbingEnv::GetFileSize(const string& fname,
-                                             uint64_t* file_size) {
+absl::Status TensorflowFileProbingEnv::GetFileSize(const std::string& fname,
+                                                   uint64_t* file_size) {
   return env_->GetFileSize(fname, file_size);
 }
 

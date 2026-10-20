@@ -19,16 +19,17 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-
+#include <functional>
 #include <iostream>
 #include <memory>
+#include <string>
+#include <utility>
 #include <vector>
 
 #include "absl/memory/memory.h"
 #include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
-
 #include "tensorflow_serving/util/net_http/server/public/httpserver.h"
 #include "tensorflow_serving/util/net_http/server/public/httpserver_interface.h"
 #include "tensorflow_serving/util/net_http/server/public/server_request_interface.h"
@@ -95,9 +96,9 @@ class MyExcecutor final : public EventExecutor {
 
 // Returns the server if success, or nullptr if there is any error.
 std::unique_ptr<HTTPServerInterface> StartServer(int port) {
-  auto options = absl::make_unique<ServerOptions>();
+  auto options = std::make_unique<ServerOptions>();
   options->AddPort(port);
-  options->SetExecutor(absl::make_unique<MyExcecutor>());
+  options->SetExecutor(std::make_unique<MyExcecutor>());
 
   auto server = CreateEvHTTPServer(std::move(options));
 

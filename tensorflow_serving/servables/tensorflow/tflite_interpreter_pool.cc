@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <limits>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include "tensorflow/core/framework/tensor.h"
@@ -57,7 +58,7 @@ TfLiteInterpreterWrapper::TfLiteInterpreterWrapper(
   }
 }
 
-tensorflow::Status TfLiteInterpreterWrapper::SetStringData(
+absl::Status TfLiteInterpreterWrapper::SetStringData(
     const std::vector<const Tensor*>& tensors, TfLiteTensor* tflite_tensor,
     int tensor_index, int batch_size) {
   // Format of the buffer for tflite:
@@ -78,7 +79,8 @@ tensorflow::Status TfLiteInterpreterWrapper::SetStringData(
   }
   size_t required_bytes = total_size + sizeof(int32_t) * (num_strings + 2);
   if (tensor_buffer_.find(tensor_index) == tensor_buffer_.end()) {
-    return errors::Internal("Tensor input for index not found: ", tensor_index);
+    return absl::InternalError(
+        absl::StrCat("Tensor input for index not found: ", tensor_index));
   }
   if (required_bytes > tensor_buffer_max_bytes_[tensor_index]) {
     if (tflite_tensor->data.raw) {
@@ -93,8 +95,8 @@ tensorflow::Status TfLiteInterpreterWrapper::SetStringData(
   for (size_t i = 0; i < offset_.size(); i++) {
     size_t size_offset_i = start + offset_[i];
     if (size_offset_i > std::numeric_limits<int32_t>::max()) {
-      return errors::Internal("Invalid size, string input too large:",
-                              size_offset_i);
+      return absl::InternalError(
+          absl::StrCat("Invalid size, string input too large:", size_offset_i));
     }
     int32_t offset_i = static_cast<int32_t>(size_offset_i);
     memcpy(tensor_buffer_[tensor_index].get() + sizeof(int32_t) * (i + 1),
@@ -113,7 +115,7 @@ tensorflow::Status TfLiteInterpreterWrapper::SetStringData(
   tflite_tensor->data.raw = tensor_buffer_[tensor_index].release();
   tflite_tensor->bytes = required_bytes;
   tflite_tensor->allocation_type = kTfLiteDynamic;
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 TfLiteStatus TfLiteInterpreterWrapper::Invoke() {
@@ -139,7 +141,7 @@ TfLiteStatus TfLiteInterpreterWrapper::Invoke() {
   return status;
 }
 
-tensorflow::Status TfLiteInterpreterWrapper::CreateTfLiteInterpreterWrapper(
+absl::Status TfLiteInterpreterWrapper::CreateTfLiteInterpreterWrapper(
     const tflite::FlatBufferModel& model,
     const tensorflow::SessionOptions& options,
     std::unique_ptr<TfLiteInterpreterWrapper>& wrapper) {
@@ -154,7 +156,7 @@ tensorflow::Status TfLiteInterpreterWrapper::CreateTfLiteInterpreterWrapper(
 
   if (tflite::InterpreterBuilder(model, resolver)(&interpreter, num_threads) !=
       kTfLiteOk) {
-    return errors::Internal(
+    return absl::InternalError(
         "Failed to create a TFLite interpreter with the given model");
   }
   std::unique_ptr<tflite::ExternalCpuBackendContext> external_context(
@@ -171,18 +173,18 @@ tensorflow::Status TfLiteInterpreterWrapper::CreateTfLiteInterpreterWrapper(
   const auto* tensor = interpreter->tensor(idx);
   if (tensor->type == kTfLiteString) {
     if (interpreter->ResizeInputTensor(idx, {batch_size}) != kTfLiteOk) {
-      return errors::Internal("Failed to resize input");
+      return absl::InternalError("Failed to resize input");
     }
   }
   if (interpreter->AllocateTensors() != kTfLiteOk) {
-    return errors::Internal("Failed to allocate tensors");
+    return absl::InternalError("Failed to allocate tensors");
   }
   wrapper.reset(new TfLiteInterpreterWrapper(std::move(external_context),
                                              std::move(interpreter)));
-  return tensorflow::OkStatus();
+  return absl::OkStatus();
 }
 
-tensorflow::Status TfLiteInterpreterPool::CreateTfLiteInterpreterPool(
+absl::Status TfLiteInterpreterPool::CreateTfLiteInterpreterPool(
     const tflite::FlatBufferModel* model,
     const tensorflow::SessionOptions& options, int pool_size,
     std::unique_ptr<TfLiteInterpreterPool>& interpreter_pool) {
@@ -194,7 +196,7 @@ tensorflow::Status TfLiteInterpreterPool::CreateTfLiteInterpreterPool(
         *model, options, wrapper));
   }
   interpreter_pool.reset(new TfLiteInterpreterPool(std::move(interpreters)));
-  return tensorflow::OkStatus();
+  return absl::OkStatus();
 }
 
 }  // namespace internal
